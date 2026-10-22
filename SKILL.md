@@ -1,7 +1,7 @@
 ---
 name: universal-agent-workspace-toolkit
 description: >-
-  通用 AI 智能體工作區全域管理中樞技能（v2.1.0 重塑新造版）。支援 Google Antigravity、Claude Code、Cursor、VS Code 跨 Windows / macOS / Linux 雙向遷移、日常快照備份與災難自癒。包含：Level_0 機密憑證排他主動探測、Level_1 至 Level_5 階梯對齊 (Level_1_Agent_Directives, Level_2_System_Settings, Level_3_Modular_Skills, Level_4_Workspace_Docs, Level_5_Heavy_References)、中樞單檔原子化、Part_XX_of_YY 大顆粒分卷防丟件、EN/ZH-TW/JA 專業三語自適應、部署前衝擊評估報告、本機防禦快照與兩次強制確認門禁。觸發詞：workspace toolkit, 搬電腦, 備份, backup, restore, snapshot, 系統遷移, workspace backup, restore workspace.
+  通用 AI 智能體工作區全域管理中樞 (v2.1.0)。支援 Antigravity、Claude、Cursor 跨平台無損遷移、日常快照與災難自癒，內建 Level_0 機密排他、Level_1~5 階梯對齊、衝擊評估與兩次確認門禁。觸發詞：workspace toolkit, 搬電腦, 備份, backup, restore, 系統遷移.
 ---
 
 # Universal AI Agent Workspace Toolkit (v2.1.0 Master)
@@ -54,3 +54,14 @@ python workspace_toolkit.py --lang en      # English
 python workspace_toolkit.py --lang zh-tw   # 繁體中文
 python workspace_toolkit.py --lang ja      # 日本語
 ```
+
+---
+
+## 3. 🛡️ 國際多語系文檔與 Git 治理規範 (I18N & Git Governance)
+
+1. **IETF BCP 47 國際語系檔名規範**：
+   - 開源文檔強制對齊作業系統 Locale 與 GitHub 規範：`README.md` (English Default)、`README_zh-TW.md` (繁體中文)、`README_ja.md` (日本語)。嚴禁使用國家代碼 `JP` 代指日語。
+2. **嚴格三語對稱與固定語序 (`EN ➔ ZH-TW ➔ JA`)**：
+   - 頂部導航列、多語章節標題及階層對照表，100% 鎖定 **🇬🇧 English ➔ 🇹🇼 繁體中文 ➔ 🇯🇵 日本語** 順序，且嚴禁於同一文檔出現重複 H2 標題。
+3. **Git 提交者身份真實性與官方隱私郵箱防線**：
+   - 嚴禁虛構或猜測任何未認證郵箱；強制查詢並綁定 GitHub 官方認證之 ID-Based Noreply 隱私郵箱（`{id}+{login}@users.noreply.github.com`）。
