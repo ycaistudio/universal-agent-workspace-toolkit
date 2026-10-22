@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment and credentials
+.env*
+*.env
+credentials
+token.json
+auth.json
+secrets.json
+
+# Tool output directories
+migration_output/
+packages/
+_staging_*/
+_restore_staging/
+_pre_restore_snapshot_*/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
