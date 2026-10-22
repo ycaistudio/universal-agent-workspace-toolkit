@@ -53,25 +53,39 @@ It provides a unified, cross-platform engine (`workspace_toolkit.py`) for:
 
 ## 🚀 Quick Start (快速上手)
 
-### 1. Terminal CLI Mode
+### 1. 🤖 Agent-Native Mode (Recommended · 自然語言對答模式 · 推薦首選)
+無需死記任何終端命令，直接在您習慣的 AI Agent 對話框（Antigravity / Cursor / Claude / VS Code）以日常語言吩咐即可：
+
+* **【情境 A：日常快照備份與匯出】(Snapshot Backup & Export)**
+  - 💬 **English**: `"Please export a snapshot backup of my AI workspace"`
+  - 💬 **繁體中文**: `「請幫我建立 AI 工作區快照備份 / 匯出封裝包」`
+  - 💬 **日本語**: `「AI ワークスペースのスナップショットを作成・エクスポートしてください」`
+  *(AI Agent 會自動探測 Level_0 機密憑證守門、呈現資產審計，並自動封裝至 packages/ 目錄)*
+
+* **【情境 B：新機部署導入與安全還原】(Import & Verified Restore)**
+  - 💬 **English**: `"I've placed the workspace package here, please verify and restore it"`
+  - 💬 **繁體中文**: `「我已放好工作區封裝包，請幫我執行完整性校驗並安全還原」`
+  - 💬 **日本語**: `「パッケージを配置しました。整合性を検証し、安全に復元してください」`
+  *(AI Agent 會自動產出部署前衝擊評估報告、建立本機防禦快照、兩次確認門禁授權，並自癒跨平台路徑)*
+
+---
+
+### 2. 💻 Terminal CLI Mode (Advanced & Automation · 進階命令行與自動化)
+適用於工程師直接在終端機操作或 CI/CD 無人值守自動化流程：
+
 ```bash
-# Interactive menu (Auto-detects language)
+# 啟動交互式三語控制台 (Interactive Console with Auto-detected Language)
 python workspace_toolkit.py
 
-# Export & Snapshot Backup (One-click)
+# 一鍵匯出中樞神經快照 (One-click Snapshot Export)
 python workspace_toolkit.py --mode pack -y
 
-# Import & Verified Restore (With impact assessment & 2-step confirmation)
+# 執行校驗與安全還原 (Import & Verified Restore with 2-Step Gate)
 python workspace_toolkit.py --mode restore
 
-# Scan & Manifest Audit (Zero file modification)
+# 僅做完整性審計與健康體檢 (Scan & Manifest Audit, Zero File Mutation)
 python workspace_toolkit.py --mode inspect
 ```
-
-### 2. Agent-Native Mode (Chat Prompts)
-Simply tell your AI Agent (Antigravity / Cursor / Claude):
-* **On Source Computer**: `"Please package my workspace using workspace_toolkit.py"` (幫我打包工作區)
-* **On Target Computer**: `"I copied the package, please restore my workspace using workspace_toolkit.py"` (幫我點件驗收並還原工作區)
 
 ---
 
