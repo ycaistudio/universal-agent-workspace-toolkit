@@ -1,6 +1,9 @@
 """
 Universal AI Agent Workspace Toolkit - Restore & Verification Engine (toolkit_restore.py)
 Implements Pre-Restore Impact Assessment, Rollback Snapshot, and Safe Deployment.
+
+Every restore extracts into a fresh temporary directory, so a previous run can never leak
+into the next one. Only the newest package is used; packages are never merged.
 """
 
 import os
@@ -8,127 +11,204 @@ import sys
 import json
 import shutil
 import zipfile
-import platform
+import tempfile
 from datetime import datetime
 from pathlib import Path
-from toolkit_scanner import win_p, calculate_md5
+from toolkit_scanner import win_p, calculate_sha256
 
-def unpack_and_audit(input_base, user_home):
-    """Detects zip packages, unpacks staging if needed, and checks manifest integrity."""
-    packages_dir = input_base / "packages"
-    manifest_file = input_base / "package_manifest.json"
-    
-    # Auto unpack zip if staging not present
-    staging_dir = input_base / "_restore_staging"
-    if not staging_dir.exists():
-        found_zips = []
-        if packages_dir.exists():
-            found_zips = list(packages_dir.glob("Level_*.zip"))
-        if not found_zips:
-            found_zips = list(input_base.glob("Level_*.zip"))
+IDE_PATCH = {"security.promptForLocalFileProtocolHandling": False}
+MCP_PREFIX = "Level_2_System_Settings/mcp/"
 
-        if found_zips:
-            staging_dir.mkdir(parents=True, exist_ok=True)
-            for zf in found_zips:
-                with zipfile.ZipFile(zf, "r") as z:
-                    z.extractall(staging_dir)
 
-    # Read manifest
-    manifest = {}
-    if not manifest_file.exists() and (staging_dir / "package_manifest.json").exists():
-        manifest_file = staging_dir / "package_manifest.json"
+def _read_manifest(zip_path):
+    with zipfile.ZipFile(zip_path) as z:
+        return json.loads(z.read("package_manifest.json").decode("utf-8"))
 
-    if manifest_file.exists():
+
+def find_packages(input_path):
+    """A .zip file itself, or the Level_*.zip files in <dir>/packages and <dir>."""
+    p = Path(input_path)
+    if p.is_file() and p.suffix.lower() == ".zip":
+        return [p]
+    found = []
+    for base in (p / "packages", p):
+        if base.is_dir():
+            found.extend(base.glob("Level_*.zip"))
+    return sorted(set(found))
+
+
+def unpack_and_audit(input_path):
+    """Pick the newest package, extract it to a fresh temp dir, verify SHA-256 for every file.
+
+    The caller owns the returned staging_dir and must delete it (see cleanup_staging).
+    """
+    candidates, ignored = [], []
+    for zp in find_packages(input_path):
         try:
-            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+            m = _read_manifest(zp)
+            candidates.append((m.get("created_at", ""), zp.stat().st_mtime, zp, m))
+        except Exception as e:
+            ignored.append((zp, f"unreadable package ({type(e).__name__})"))
 
-    # Verify MD5 checklist
-    verified_files = 0
-    corrupted_files = []
-    file_manifest = manifest.get("file_manifest", {})
-    for rel_p, meta in file_manifest.items():
-        local_f = staging_dir / rel_p
-        if local_f.exists() and local_f.is_file():
-            if calculate_md5(local_f) == meta.get("md5"):
-                verified_files += 1
-            else:
-                corrupted_files.append((rel_p, "MD5 Mismatch"))
+    result = {"staging_dir": None, "manifest": {}, "package": None, "ignored": ignored,
+              "verified_files": 0, "corrupted_files": [], "error": None}
+    if not candidates:
+        result["error"] = f"No valid package (Level_*.zip) found in {input_path}"
+        return result
+
+    candidates.sort(key=lambda c: (c[0], c[1]))
+    _, _, chosen, manifest = candidates[-1]
+    ignored.extend((c[2], "older package, not used") for c in candidates[:-1])
+
+    staging = Path(tempfile.mkdtemp(prefix="uawt_restore_"))
+    result.update(staging_dir=staging, manifest=manifest, package=chosen)
+    with zipfile.ZipFile(chosen) as z:
+        z.extractall(staging)
+
+    for rel_p, meta in manifest.get("file_manifest", {}).items():
+        local_f = staging / rel_p
+        if not local_f.is_file():
+            result["corrupted_files"].append((rel_p, "Missing"))
+        elif calculate_sha256(local_f) == meta.get("sha256"):
+            result["verified_files"] += 1
         else:
-            corrupted_files.append((rel_p, "Missing"))
+            result["corrupted_files"].append((rel_p, "SHA-256 mismatch"))
+    return result
 
-    return {
-        "staging_dir": staging_dir,
-        "manifest": manifest,
-        "verified_files": verified_files,
-        "corrupted_files": corrupted_files
-    }
 
-def generate_impact_assessment(staging_dir, target_env, user_home, ws_dst):
-    """Conducts a dry-run to identify additions, collisions, and setting mutations."""
-    assessment = {
-        "pure_additions": 0,
-        "collisions": [],
-        "config_mutations": 2,
-        "level1_conflict": False
-    }
+def cleanup_staging(staging_dir):
+    if staging_dir:
+        shutil.rmtree(win_p(staging_dir), ignore_errors=True)
 
-    # Check Level_1 AGENTS.md collision
-    l1_dir = staging_dir / "Level_1_Agent_Directives"
-    if l1_dir.exists():
-        for f in l1_dir.iterdir():
-            if f.is_file():
-                local_f = ws_dst / f.name
-                if local_f.exists():
-                    assessment["level1_conflict"] = True
-                    assessment["collisions"].append(str(local_f))
-                else:
-                    assessment["pure_additions"] += 1
 
-    # Check Level_3 skills collisions
+# ---------------------------------------------------------------- IDE settings
+def ide_settings_paths(user_home):
+    """settings.json locations for IDEs that have been run on this machine (their User dir exists)."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", user_home / "AppData" / "Roaming"))
+    elif sys.platform == "darwin":
+        base = user_home / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", user_home / ".config"))
+    paths = [(name, base / name / "User" / "settings.json") for name in ("Antigravity", "Cursor", "Code")]
+    return [(n, p) for n, p in paths if p.parent.is_dir()]
+
+
+def apply_ide_patch(user_home):
+    """Add the file:/// prompt bypass. Never overwrites a file it cannot parse (VS Code settings may be JSONC)."""
+    results = []
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for name, sp in ide_settings_paths(user_home):
+        if not sp.exists():
+            sp.write_text(json.dumps(IDE_PATCH, indent=4), encoding="utf-8")
+            results.append({"ide": name, "path": sp, "status": "created"})
+            continue
+        try:
+            data = json.loads(sp.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            results.append({"ide": name, "path": sp, "status": "manual"})
+            continue
+        if all(data.get(k) == v for k, v in IDE_PATCH.items()):
+            results.append({"ide": name, "path": sp, "status": "already"})
+            continue
+        backup = sp.with_name(f"settings.json.bak-{stamp}")
+        shutil.copy2(win_p(sp), win_p(backup))
+        data.update(IDE_PATCH)
+        sp.write_text(json.dumps(data, indent=4), encoding="utf-8")
+        results.append({"ide": name, "path": sp, "status": "patched", "backup": backup})
+    return results
+
+
+# ---------------------------------------------------------------- impact + snapshot
+def _staged_files(staging_dir, folder):
+    base = staging_dir / folder
+    if not base.exists():
+        return []
+    return [(Path(r) / f, (Path(r) / f).relative_to(base)) for r, _, fs in os.walk(base) for f in fs]
+
+
+def generate_impact_assessment(staging_dir, target_env, user_home, ws_dst, apply_ide=True):
+    """Dry run: what would be added, what collides, what settings would change."""
+    mcp_dst = user_home / ".gemini" / "antigravity" / "mcp"
+    skills_dst = user_home / ".gemini" / "config" / "skills"
+    assessment = {"pure_additions": 0, "collisions": [], "config_mutations": 0, "level1_conflict": False}
+
+    for f, _ in _staged_files(staging_dir, "Level_1_Agent_Directives"):
+        if (ws_dst / f.name).exists():
+            assessment["level1_conflict"] = True
+            assessment["collisions"].append(str(ws_dst / f.name))
+        else:
+            assessment["pure_additions"] += 1
+
+    for f, rel in _staged_files(staging_dir, "Level_2_System_Settings/mcp"):
+        if (mcp_dst / rel).exists():
+            assessment["collisions"].append(str(mcp_dst / rel))
+            assessment["config_mutations"] += 1
+        else:
+            assessment["pure_additions"] += 1
+
     l3_dir = staging_dir / "Level_3_Modular_Skills"
-    target_skills_dir = user_home / ".gemini" / "config" / "skills"
-    if l3_dir.exists():
-        for skill_dir in l3_dir.iterdir():
-            if skill_dir.is_dir():
-                loc_skill = target_skills_dir / skill_dir.name
-                if loc_skill.exists():
-                    assessment["collisions"].append(str(loc_skill))
-                else:
-                    assessment["pure_additions"] += 1
+    skill_dirs = [d for d in l3_dir.iterdir() if d.is_dir()] if l3_dir.exists() else []
+    for skill_dir in skill_dirs:
+        if (skills_dst / skill_dir.name).exists():
+            assessment["collisions"].append(str(skills_dst / skill_dir.name))
+        else:
+            assessment["pure_additions"] += 1
 
-    # Check Level_4 docs
-    l4_dir = staging_dir / "Level_4_Workspace_Docs"
-    if l4_dir.exists():
-        for root, _, files in os.walk(l4_dir):
-            for file in files:
-                rel = Path(root).relative_to(l4_dir) / file
-                if (ws_dst / rel).exists():
-                    assessment["collisions"].append(str(ws_dst / rel))
-                else:
-                    assessment["pure_additions"] += 1
+    for _, rel in _staged_files(staging_dir, "Level_4_Workspace_Docs"):
+        if (ws_dst / rel).exists():
+            assessment["collisions"].append(str(ws_dst / rel))
+        else:
+            assessment["pure_additions"] += 1
 
+    if apply_ide:
+        assessment["config_mutations"] += len(ide_settings_paths(user_home))
     return assessment
 
-def create_rollback_snapshot(user_home):
-    """Creates a local pre-restore snapshot of existing config before any mutation."""
-    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    snapshot_dir = user_home / ".gemini" / f"_pre_restore_snapshot_{now_str}"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    cfg_src = user_home / ".gemini" / "config"
-    if cfg_src.exists():
-        shutil.copytree(win_p(cfg_src), win_p(snapshot_dir / "config"), dirs_exist_ok=True)
+def create_rollback_snapshot(user_home, staging_dir, target_env, ws_dst, apply_ide=True):
+    """Copy everything the restore could overwrite. Returns the snapshot dir, or None if there was nothing to save."""
+    snap = user_home / ".gemini" / f"_pre_restore_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    mapping = []  # (original, copy inside snapshot)
 
-    mcp_src = user_home / ".gemini" / "antigravity" / "mcp"
-    if mcp_src.exists():
-        shutil.copytree(win_p(mcp_src), win_p(snapshot_dir / "mcp"), dirs_exist_ok=True)
+    def save(src, rel):
+        dst = snap / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(win_p(src), win_p(dst), dirs_exist_ok=True)
+        else:
+            shutil.copy2(win_p(src), win_p(dst))
+        mapping.append((src, dst))
 
-    return snapshot_dir
+    for src, rel in ((user_home / ".gemini" / "config", "config"),
+                     (user_home / ".gemini" / "antigravity" / "mcp", "mcp")):
+        if src.exists():
+            save(src, rel)
+    if apply_ide:
+        for name, sp in ide_settings_paths(user_home):
+            if sp.exists():
+                save(sp, f"ide/{name}/settings.json")
+    for _, rel in _staged_files(staging_dir, "Level_4_Workspace_Docs"):
+        if (ws_dst / rel).exists():
+            save(ws_dst / rel, f"workspace/{rel.as_posix()}")
+    if target_env == "fresh":
+        for f, _ in _staged_files(staging_dir, "Level_1_Agent_Directives"):
+            if (ws_dst / f.name).exists():
+                save(ws_dst / f.name, f"workspace/{f.name}")
 
-def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user=""):
-    """Deploys assets safely: Level_1 .incoming protection, Level_2 patch, path self-healing."""
+    if not mapping:
+        return None
+    lines = ["Rollback: copy each snapshot item back over its original location.", ""]
+    lines += [f"{dst}  ->  {src}" for src, dst in mapping]
+    (snap / "ROLLBACK.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return snap
+
+
+# ---------------------------------------------------------------- deploy
+def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user="", apply_ide=True):
+    """Deploys assets: Level_1/MCP .incoming protection on existing targets, IDE patch, path self-healing."""
     gemini_dir = user_home / ".gemini"
     config_dst = gemini_dir / "config"
     skills_dst = config_dst / "skills"
@@ -138,91 +218,45 @@ def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user=""):
     mcp_dst.mkdir(parents=True, exist_ok=True)
     ws_dst.mkdir(parents=True, exist_ok=True)
 
-    # 1. Level_1 Deploy
-    l1_dir = staging_dir / "Level_1_Agent_Directives"
-    if l1_dir.exists():
-        for f in l1_dir.iterdir():
-            if f.is_file():
-                target_f = ws_dst / f.name
-                if target_env == "existing" and target_f.exists():
-                    incoming_f = ws_dst / f"{f.name}.incoming"
-                    shutil.copy2(win_p(f), win_p(incoming_f))
-                else:
-                    shutil.copy2(win_p(f), win_p(target_f))
+    incoming = []  # files saved as *.incoming instead of overwriting local ones
 
-    # 2. Level_2 Settings & MCP
-    l2_dir = staging_dir / "Level_2_System_Settings"
-    if l2_dir.exists():
-        mcp_src = l2_dir / "mcp"
-        if mcp_src.exists():
-            shutil.copytree(win_p(mcp_src), win_p(mcp_dst), dirs_exist_ok=True)
-
-        # Patch IDE settings
-        ide_targets = []
-        if sys.platform == "win32":
-            appdata = Path(os.environ.get("APPDATA", user_home / "AppData" / "Roaming"))
-            ide_targets = [
-                appdata / "Antigravity" / "User" / "settings.json",
-                appdata / "Cursor" / "User" / "settings.json",
-                appdata / "Code" / "User" / "settings.json"
-            ]
-        elif sys.platform == "darwin":
-            app_support = user_home / "Library" / "Application Support"
-            ide_targets = [
-                app_support / "Antigravity" / "User" / "settings.json",
-                app_support / "Cursor" / "User" / "settings.json",
-                app_support / "Code" / "User" / "settings.json"
-            ]
+    def deploy(src, target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target_env == "existing" and target.exists():
+            alt = target.with_name(target.name + ".incoming")
+            shutil.copy2(win_p(src), win_p(alt))
+            incoming.append(alt)
         else:
-            config_base = Path(os.environ.get("XDG_CONFIG_HOME", user_home / ".config"))
-            ide_targets = [
-                config_base / "Antigravity" / "User" / "settings.json",
-                config_base / "Cursor" / "User" / "settings.json",
-                config_base / "Code" / "User" / "settings.json"
-            ]
+            shutil.copy2(win_p(src), win_p(target))
 
-        patch = {
-            "security.promptForLocalFileProtocolHandling": False,
-            "security.workspace.trust.untrustedFiles": "open"
-        }
-        for ide_f in ide_targets:
-            try:
-                data = {}
-                if ide_f.exists():
-                    try:
-                        data = json.loads(ide_f.read_text(encoding="utf-8"))
-                    except Exception:
-                        pass
-                else:
-                    ide_f.parent.mkdir(parents=True, exist_ok=True)
-                data.update(patch)
-                ide_f.write_text(json.dumps(data, indent=4), encoding="utf-8")
-            except Exception:
-                pass
+    # 1. Level_1 directives
+    for f, _ in _staged_files(staging_dir, "Level_1_Agent_Directives"):
+        deploy(f, ws_dst / f.name)
 
-    # 3. Level_3 Skills Deploy
+    # 2. Level_2 MCP definitions (a redacted copy must never replace a working local config)
+    for f, rel in _staged_files(staging_dir, "Level_2_System_Settings/mcp"):
+        deploy(f, mcp_dst / rel)
+    ide_report = apply_ide_patch(user_home) if apply_ide else []
+
+    # 3. Level_3 skills, 4. Level_4 docs
     l3_dir = staging_dir / "Level_3_Modular_Skills"
     if l3_dir.exists():
         shutil.copytree(win_p(l3_dir), win_p(skills_dst), dirs_exist_ok=True)
-
-    # 4. Level_4 Docs Deploy
     l4_dir = staging_dir / "Level_4_Workspace_Docs"
     if l4_dir.exists():
         shutil.copytree(win_p(l4_dir), win_p(ws_dst), dirs_exist_ok=True)
 
-    # 5. Dynamic Path Refactoring
+    # 5. Dynamic path refactoring (source username -> target username)
     refactored_count = 0
     if src_user and src_user != user_home.name:
-        src_encoded = src_user.replace(" ", "%20")
-        target_encoded = user_home.name.replace(" ", "%20")
         replacements = [
             (f"file:///C:/Users/{src_user}/", f"file:///{user_home.as_posix()}/"),
-            (f"file:///C:/Users/{src_encoded}/", f"file:///{user_home.as_posix().replace(' ', '%20')}/"),
+            (f"file:///C:/Users/{src_user.replace(' ', '%20')}/", f"file:///{user_home.as_posix().replace(' ', '%20')}/"),
             (f"C:/Users/{src_user}/", f"{user_home.as_posix()}/"),
             (f"/Users/{src_user}/", f"/Users/{user_home.name}/"),
-            (f"/home/{src_user}/", f"/home/{user_home.name}/")
+            (f"/home/{src_user}/", f"/home/{user_home.name}/"),
         ]
-        for target_folder in [config_dst, mcp_dst, ws_dst]:
+        for target_folder in (config_dst, mcp_dst, ws_dst):
             if not target_folder.exists():
                 continue
             for root, _, files in os.walk(target_folder):
@@ -231,12 +265,11 @@ def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user=""):
                         fp = Path(root) / f
                         try:
                             content = fp.read_text(encoding="utf-8")
-                            orig = content
-                            for old, new in replacements:
-                                if old in content:
-                                    content = content.replace(old, new)
-                            if content != orig:
-                                fp.write_text(content, encoding="utf-8")
+                            new = content
+                            for old, rep in replacements:
+                                new = new.replace(old, rep)
+                            if new != content:
+                                fp.write_text(new, encoding="utf-8")
                                 refactored_count += 1
                         except Exception:
                             pass
@@ -246,5 +279,7 @@ def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user=""):
         "skills_dst": skills_dst,
         "mcp_dst": mcp_dst,
         "ws_dst": ws_dst,
-        "refactored_count": refactored_count
+        "refactored_count": refactored_count,
+        "ide_report": ide_report,
+        "incoming": incoming,
     }
