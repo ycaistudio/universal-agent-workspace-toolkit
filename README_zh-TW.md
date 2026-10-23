@@ -1,5 +1,6 @@
 # Universal AI Agent Workspace Toolkit (繁體中文完整手冊)
-**通用 AI 智能體工作區全域管理、遷移與快照還原工具**
+**通用 AI 智能體工作區全域管理、遷移與快照還原工具**  
+支援 Google Antigravity、Claude Code、Cursor、VS Code（Cline / Roo）與 **Grok Bot**。
 
 <p align="center">
   <a href="README.md"><b>English (Master)</b></a> •
@@ -11,7 +12,7 @@
 
 ## 🇹🇼 繁體中文說明
 
-**Universal AI Agent 工作區全域管理中樞** 專為大型 AI 開發與工程團隊打造，支援跨 Windows / macOS / Linux 雙向遷移、日常快照備份與還原。
+**Universal AI Agent 工作區全域管理中樞** 支援 **Google Antigravity**、**Claude Code / Desktop**、**Cursor**、**VS Code (Cline / Roo)** 與 **Grok Bot**，可在 Windows / macOS / Linux 上做快照備份與還原。Grok Bot 是獨立設定檔，說明見下方專節。
 
 ### 六大核心支柱 (Core Invariants)
 1. **單一控制台 (`workspace_toolkit.py`)**：告別分散的 A/B 腳本與舊時代 `.bat` 批次檔，一套純 Python 核心全平台通用。
@@ -63,31 +64,61 @@
 | **Level_5<br>Heavy Media<br>龐大素材資料<br>大容量メディア** | `Level_5_Heavy_References/` | Large PDFs, Videos, Datasets (>10MB - GBs) | **⚪ Not packed / 目前不打包 / 現在は梱包しません**<br>🇬🇧 Counted in the audit but not packed. There is no splitting yet.<br>🇹🇼 只在審計表計數，目前不打包，也尚無分卷功能。<br>🇯🇵 監査表に件数のみ表示し、梱包しません。分割機能は未実装です。 |
 | **Level_6<br>Memory drop<br>記憶匯出<br>メモリ書き出し** | `Level_6_Memory_Drop/` | Grok memory-drop JSONL (`shared-user/`, `agents/<uuid>/`) | **🟣 Incoming only / 只進 incoming / incoming のみ**<br>🇬🇧 Packed. Restore does not write platform memory. Each bot imports its own `fact` lines.<br>🇹🇼 會打包。還原不寫入平台記憶，需由各 Bot 自行匯入 `fact`。<br>🇯🇵 梱包します。復元はプラットフォームのメモリを書きません。各 Bot が自分の `fact` を取り込みます。 |
 | **Level_7<br>Conversations<br>對話快照<br>会話スナップショット** | `Level_7_Conversations/` | Read-only `search-index.db` snapshot + `agent-transcripts/` | **🔒 Not restored over live data / 不覆蓋 live 資料 / 稼働中データは上書きしない**<br>🇬🇧 SQLite `backup()` snapshot plus transcripts. Never replace the live index or transcripts.<br>🇹🇼 以 SQLite `backup()` 做快照並附上逐字稿。絕不取代 live 索引或逐字稿。<br>🇯🇵 SQLite `backup()` のスナップショットとトランスクリプト。稼働中の索引や逐字稿は置き換えません。 |
+| **Level_8<br>Cursor stores<br>實驗性清單<br>実験的一覧** | `Level_8_Cursor_Stores_Experimental/` | `/cursor/stores` when `--include-cursor-stores` is set | **Opt-in / 選擇性 / 任意**<br>🇬🇧 Contents are packed only with that flag. Restore does not write `/cursor/stores`.<br>🇹🇼 只有加上該旗標才打包內容。還原不寫回 `/cursor/stores`。<br>🇯🇵 そのフラグがあるときだけ中身を梱包します。復元は `/cursor/stores` を書きません。 |
 
 
 ---
 
 ## Grok Bot 設定檔
 
-`--profile auto`（預設）在 agent-data 目錄存在時選擇 Grok Bot，否則維持 Antigravity。沒有該目錄時，Antigravity 行為不變。
+`--profile auto` 是預設。agent-data 目錄存在時（先看 `GROK_AGENT_DATA`，否則 `AGENT_DATA`，否則 `/home/box/agent-data`）選 **Grok Bot**；目錄不在就維持 **Antigravity**，即使別的理由已有 `/workspace` 也一樣。`--profile grok` 與 `--profile antigravity` 覆蓋 `UAWT_PROFILE`。省略 `--profile` 時，`UAWT_PROFILE` 可以是 `auto`、`grok` 或 `antigravity`。明確寫 `--profile auto` 時不讀 `UAWT_PROFILE`。
+
+| 層級 | 打包內容 |
+| :--- | :--- |
+| 1 | `profile.json`、`avatar.*`、`group.json`；工作區裡名為 `AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` 的檔案 |
+| 2 | `settings.json`、`automations/`、該 Bot 目錄裡的其他檔案、直接放在 `agents/` 下的檔案，以及 `agents/` 下名稱不是 agent id 的資料夾 |
+| 3 | 只有 `agent-data/workflows/` |
+| 4 | 其餘工作區檔案；各 Bot 的 `notes/`、`reference/`、`attachments/`、`private/`；`agent-data/projects/` |
+| 5 | 只計數、不打包：大於 10 MiB，或副檔名 `.mp4` `.mov` `.avi` `.iso` `.dmg` `.tar` `.gz`。Level 1、3、6、7、8 不會被改列到這裡 |
+| 6 | memory-drop 目錄裡已經存在的檔案（JSONL，以及同目錄的其他檔，例如 `memory-status.json`），加上 `agent-data/user-memory/` 與各 Bot 的 `memory/` |
+| 7 | 對 `agent-data/search-index.db` 做 SQLite `backup()`，存成 `search-index-snapshot.db`，並附上 `agent-transcripts/` |
+| 8 | 只有加上 `--include-cursor-stores` 才打包 `/cursor/stores` |
+
+預設排除、要另外打開的項目：
+
+* 機密，除非 `--include-secrets`：`box-secrets.json`、`host-secrets.json`、`chrome-cookie-seed.json`、`gateway.json`、`teach-queue-key.json`、agent-data 頂層的 `*-secrets.json`，以及 Level_0 的檔名與 Token 規則。仍被打包的 JSON 裡，形如機密的值會換成 `__REDACTED_RESTORE_MANUALLY__`。
+* `managed-skills/` 與 `plugin-skills/` 一律不打包，沒有對應旗標。
+* 名為 `sand-subagent-*` 的目錄，除非 `--include-subagents` 或 `INCLUDE_SUBAGENTS=1`。
+* `/cursor/stores` 的檔案內容，除非 `--include-cursor-stores`。沒有這個旗標時，清單只記錄名稱。
+* 符號連結。打包時不跟隨。
+
+`--encrypt` 呼叫 OpenSSL `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt`。密碼放在 `UAWT_ENCRYPT_PASSPHRASE` 或提示輸入，不接受命令列參數。系統 `PATH` 上要有 OpenSSL。成功時刪除明文 zip、留下 `*.zip.enc`（權限 `600`）。失敗時保留明文 zip 並以錯誤結束。
+
+還原會做兩次確認。若省略 `--target-env`，還會先問目的地是全新還是既有環境。`-y` 跳過這些提問，並把省略的 `--target-env` 當成 `existing`。寫入前，任何會被覆蓋的既有檔案會先複製到工作區的 `.grok-pre-restore-snapshot_*`，並附上 `ROLLBACK.txt`。Level 4 的工作區檔案直接寫入原位。agent-data 目錄存在時寫入 `workflows/`；否則那些技能留在還原套件裡。`--target-env fresh` 時，名為 `AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` 的工作區檔案寫入原位；`existing` 時存成 `<name>.incoming`。`profile.json`、`settings.json`、`group.json` 與 `avatar.*` 只有在該 Bot 目錄已經存在時才寫成 `.incoming`。`automations/` 底下的檔案，只有該 `automations/` 目錄存在時才寫成附檔。直接放在 `shared-user/` 下的 memory-drop 檔，會在 `user-memory/` 存在時存成 `<name>.incoming`。路徑為 `agents/<uuid>/<name>` 的 memory-drop 檔（該檔本身，不含更深的子目錄）會在該 Bot 目錄存在時存成 `<name>.incoming`。`agent-data/user-memory/` 的複本，以及各 Bot 的 `memory/`，留在套件裡。封裝樹與 `MANUAL_REBUILD.md` 一律放到 `.grok-restore-incoming/<tracking-id>/`。live 的 `profile.json`、設定、例行工作、`search-index.db`、逐字稿與 `/cursor/stores` 維持原樣。不會建立不存在的 Bot 目錄。`--uuid-map OLD=NEW`（可重複）或 `--uuid-map-file`（舊 id 對新 id 的 JSON 物件）會改寫文字檔裡的 Bot id。那些文字檔裡記錄的工作區與 agent-data 路徑會改成目的地路徑。兩個 id 都必須是帶連字號的 UUID 或 32 位十六進位。兩個 id 相同的一對會被略過。快照資料庫檔的位元組保持原樣。`package_manifest.json` 含有 `"profile": "grok"` 時走 Grok 還原。
 
 | 變數 | 也接受 | 預設 |
 | :--- | :--- | :--- |
 | `GROK_AGENT_DATA` | `AGENT_DATA` | `/home/box/agent-data` |
-| `GROK_WORKSPACE` | `WORKSPACE` | `/workspace` |
+| `GROK_WORKSPACE` | `WORKSPACE` | `/workspace`。`--workspace-dir` 只覆蓋這次的工作區，不改 memory-drop 路徑 |
 | `GROK_MEMORY_DROP` | `MEMORY_DROP` | `$GROK_WORKSPACE/exports/memory-drop` |
 | `GROK_CURSOR_STORES` | | `/cursor/stores` |
+| `UAWT_PROFILE` | | 只有省略 `--profile` 時才使用 |
+| `UAWT_ENCRYPT_PASSPHRASE` | | 有 `--encrypt` 且此變數是空的時候改為提示輸入 |
+| `INCLUDE_SUBAGENTS` | | `0`；`1` 等同 `--include-subagents` |
+| `INCLUDE_BULKY_DIRS` | | `0` 略過名稱以 `.venv` 開頭的目錄；`1` 會打包。其他值會結束程式 |
 
-使用者技能只來自 `workflows/`。`managed-skills/` 與 `plugin-skills/` 不打包。Level_6 是每個 Bot 自己匯出的 memory-drop JSONL。Level_7 是 `search-index.db` 的唯讀 SQLite 快照與 `agent-transcripts/`。`/cursor/stores` 為實驗性清單，預設不打包，還原也不會寫回。尚未在 live Pages 主機驗證。
-
-預設排除 `box-secrets.json`、`host-secrets.json`、`chrome-cookie-seed.json`、`gateway.json`、`teach-queue-key.json`，以及 agent-data 頂層的 `*-secrets.json`。`--encrypt` 使用 OpenSSL AES-256-CBC（`-pbkdf2 -iter 200000 -salt`），密碼來自 `UAWT_ENCRYPT_PASSPHRASE` 或提示，不接受命令列參數。
-
-還原仍走兩次確認與回滾快照。直接寫入的只有工作區檔案與使用者技能。身份、設定、例行工作、記憶以 `.incoming` 加 `.grok-restore-incoming/<id>/MANUAL_REBUILD.md` 交付。不覆蓋 live 的 `profile.json`、`search-index.db`、逐字稿，也不建立不存在的 Bot 目錄。`--uuid-map OLD=NEW` 改寫文字檔中的 id 與絕對路徑。打包前請每個 Bot 自己匯出記憶（見 `AI_GUIDED_WIZARD_PROMPTS.md`）。測試使用合成目錄（`tests/test_grok_profile.py`），尚未在 live Grok Bot 上執行。
+封裝程式不會替 Bot 查記憶。每個 Bot 要事先把 memory-drop 寫好。見 `AI_GUIDED_WIZARD_PROMPTS.md`。
 
 ```bash
-python workspace_toolkit.py --mode pack --profile grok -y
-python workspace_toolkit.py --mode restore --uuid-map OLD=NEW --target-env existing -y
+python workspace_toolkit.py --mode pack --profile grok
+UAWT_ENCRYPT_PASSPHRASE='choose-one' python workspace_toolkit.py --mode pack --profile grok --encrypt
+python workspace_toolkit.py --mode restore --target-env existing \
+  --uuid-map 11111111-1111-4111-8111-111111111111=22222222-2222-4222-8222-222222222222
 ```
+
+未指定 `--output-dir` 時，打包寫入 `./migration_output`。未指定 `--input-dir` 時，還原讀取 `./migration_output`。該路徑不存在時，還原改用目前目錄。
+
+**限制。** `tests/test_grok_profile.py` 用的是合成目錄。此設定檔尚未在 live Grok Bot 主機上執行。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages 或 `/cursor/stores`。上面的 AES-256-CBC 參數沒有完整性標記。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。這項檢查不驗證密文。
 
 ---
 
@@ -152,6 +183,11 @@ python workspace_toolkit.py --mode inspect
 
 # 手動指定語言界面
 python workspace_toolkit.py --lang zh-tw
+
+# Grok Bot：打包與還原（加上 -y 會跳過提問）
+python workspace_toolkit.py --mode pack --profile grok
+python workspace_toolkit.py --mode restore --target-env existing \
+  --uuid-map 11111111-1111-4111-8111-111111111111=22222222-2222-4222-8222-222222222222
 ```
 
 
