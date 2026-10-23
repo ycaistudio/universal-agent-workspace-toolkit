@@ -186,7 +186,6 @@ universal-agent-workspace-toolkit/
 ├── toolkit_grok.py               # Grok Bot profile: scan, pack, conservative restore
 ├── toolkit_crypto.py             # Optional OpenSSL AES-256-CBC encryption (--encrypt)
 ├── tests/                        # Synthetic Grok box + Antigravity regression
-├── THIRD_PARTY_NOTICES.md        # MIT notice for studied grok-bot-backup layout
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
 ├── AI_GUIDED_WIZARD_PROMPTS.md   # Natural Language Prompt Templates (自然語言引導詞 / 対話プロンプト集)
