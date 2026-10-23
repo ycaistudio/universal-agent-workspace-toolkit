@@ -43,7 +43,7 @@ def _display(path, user_home):
         return str(path)
 
 
-def run_pack(assets, output_base, user_home, include_level5=False):
+def run_pack(assets, output_base, user_home, include_level5=False, encrypted=False):
     """Executes the export & snapshot backup packaging workflow."""
     include_secrets = assets["include_secrets"]
     now = datetime.now()
@@ -118,9 +118,11 @@ def run_pack(assets, output_base, user_home, include_level5=False):
 
         manifest_doc = {
             "manifest_version": "v2.1.0",
+            "profile": "antigravity",
             "tracking_id": tracking_id,
             "created_at": now.isoformat(),
             "include_secrets": include_secrets,
+            "encrypted": encrypted,
             "sender_system": {
                 "machine_fingerprint": platform.node(),
                 "os": sys.platform,

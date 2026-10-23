@@ -1,10 +1,10 @@
 ---
 name: universal-agent-workspace-toolkit
 description: >-
-  通用 AI 智能體工作區全域管理中樞 (v2.1.0)。支援 Antigravity、Claude、Cursor 跨平台遷移、日常快照與還原，內建 Level_0 預設機密排除、Level_1~5 階梯對齊、衝擊評估與兩次確認門禁。觸發詞：workspace toolkit, 搬電腦, 備份, backup, restore, 系統遷移.
+  通用 AI 智能體工作區全域管理中樞 (v2.2.0)。支援 Antigravity 與 Grok Bot 遷移、日常快照與還原，內建 Level_0 預設機密排除、Level_1~7 階梯對齊、衝擊評估與兩次確認門禁。觸發詞：workspace toolkit, 搬電腦, 備份, backup, restore, 系統遷移, grok bot.
 ---
 
-# Universal AI Agent Workspace Toolkit (v2.1.0 Master)
+# Universal AI Agent Workspace Toolkit (v2.2.0 Master)
 
 ## 1. 🎯 核心定位與設計架構 (Core Architecture)
 
@@ -24,6 +24,8 @@ description: >-
      - `Level_3_Modular_Skills`（模組化可插拔技能庫 · 合併導入，同名檔案覆寫前先建立快照）
      - `Level_4_Workspace_Docs`（專案工程文檔與腳本 · 增量同步）
      - `Level_5_Heavy_References`（龐大素材與二進制 · 目前只計數，不打包）
+     - `Level_6_Memory_Drop`（僅 Grok Bot · memory-drop JSONL · 還原不寫入平台記憶）
+     - `Level_7_Conversations`（僅 Grok Bot · search-index 唯讀快照與逐字稿）
 4. **單一封裝檔**：
    - 中樞核心（Level_1~4）總量 $\le 100$MB，保持**單一原子完整檔案**（零碎片，丟失風險 = 0）；
    - Level 5 大檔目前只在審計表計數，不打包（尚無分卷功能）。
@@ -53,6 +55,10 @@ python workspace_toolkit.py --mode inspect
 python workspace_toolkit.py --lang en      # English
 python workspace_toolkit.py --lang zh-tw   # 繁體中文
 python workspace_toolkit.py --lang ja      # 日本語
+
+# Grok Bot（agent-data 存在時 --profile auto 會自動選到 grok）
+python workspace_toolkit.py --mode pack --profile grok -y
+python workspace_toolkit.py --mode restore --uuid-map OLD=NEW --target-env existing -y
 ```
 
 ---
@@ -65,3 +71,31 @@ python workspace_toolkit.py --lang ja      # 日本語
    - 頂部導航列、多語章節標題及階層對照表，100% 鎖定 **🇬🇧 English ➔ 🇹🇼 繁體中文 ➔ 🇯🇵 日本語** 順序，且嚴禁於同一文檔出現重複 H2 標題。
 3. **Git 提交者身份真實性與官方隱私郵箱防線**：
    - 嚴禁虛構或猜測任何未認證郵箱；強制查詢並綁定 GitHub 官方認證之 ID-Based Noreply 隱私郵箱（`{id}+{login}@users.noreply.github.com`）。
+
+---
+
+## 4. 🤖 Grok Bot：打包前的 memory-drop
+
+Grok 設定檔**不能**替 Bot 呼叫 RecallMemory。打包前，請在**每一個** Bot 上先匯出記憶，否則 Level_6 只會記下「未匯出」。
+
+預設目錄是 `$GROK_WORKSPACE/exports/memory-drop`（可用 `GROK_MEMORY_DROP` 或 `MEMORY_DROP` 改）：
+
+```text
+memory-drop/
+├── shared-user/
+│   └── memory-user.jsonl
+└── agents/
+    └── <agent-uuid>/
+        ├── memory-profile.jsonl
+        └── memory-agent.jsonl
+```
+
+每一行是一個 JSON 物件，至少要有非空的 `fact`，並帶上 `date`、`tier`（`profile`、`log` 或 `note`）、`scope`、`source`。空檔不是「已經查過」。真的查完且沒有記憶時，才在同一目錄寫 `memory-status.json`（`status` 為 `no_memories`，`agent_id` 必須是該 Bot 的 id，`checked_at_utc` 為帶時區的 UTC 時間）。
+
+可直接貼給每個 Bot：
+
+```text
+Use your memory tool to list every fact you are allowed to see, across tiers and scopes, including older records. Write the full facts, not summaries, as UTF-8 JSONL (one JSON object per line) under $MEMORY_DROP/agents/<your-agent-uuid>/. Each object needs date, tier, scope, source, and a non-empty fact. If you can export shared user memory, write $MEMORY_DROP/shared-user/memory-user.jsonl. If you searched and found nothing, write memory-status.json next to the JSONL with status "no_memories", your agent_id, and checked_at_utc. Do not change the source memories, and do not claim the export finished without checking.
+```
+
+還原時，這些 JSONL 只會進 `.incoming` 與手動重建清單。把檔案放到磁碟上不會重建平台記憶，必須在目標 Bot 上用它自己的記憶工具重新匯入每一條 `fact`。
