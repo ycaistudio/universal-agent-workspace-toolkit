@@ -186,7 +186,6 @@ universal-agent-workspace-toolkit/
 ├── toolkit_grok.py               # Grok Bot profile: scan, pack, conservative restore
 ├── toolkit_crypto.py             # Optional OpenSSL AES-256-CBC encryption (--encrypt)
 ├── tests/                        # Synthetic Grok box + Antigravity regression
-├── LICENSE                       # MIT License (copyright ycaistudio, 2026)
 ├── THIRD_PARTY_NOTICES.md        # MIT notice for studied grok-bot-backup layout
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
@@ -196,14 +195,6 @@ universal-agent-workspace-toolkit/
 ├── README_ja.md                  # Japanese Manual (日本語完全マニュアル)
 └── .gitignore                    # Security Exclusions & Cache Filters (資安排他過濾規則 / 除外ルール)
 ```
-
----
-
-## 📄 License / 授權條款 / ライセンス
-
-* **🇬🇧 English**: This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-* **🇹🇼 繁體中文**：本專案採用 MIT 開源授權條款 — 詳情請參閱 [LICENSE](LICENSE) 檔案。
-* **🇯🇵 日本語**：本プロジェクトは MIT ライセンスの下で公開されています — 詳細は [LICENSE](LICENSE) ファイルをご参照ください。
 
 ---
 
