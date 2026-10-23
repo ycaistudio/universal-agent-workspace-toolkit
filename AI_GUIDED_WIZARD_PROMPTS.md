@@ -7,27 +7,21 @@
 
 ## 📌 【Grok Bot：打包前先匯出記憶】(Memory-drop, before pack)
 
-> Grok Bot 設定檔讀得到本機檔案，但**不能**替每個 Bot 呼叫 RecallMemory。若跳過這一步，封裝仍會完成，Level_6 只會標成「未匯出」。Antigravity 環境沒有這一步。
+> Grok Bot 設定檔讀得到本機檔案，但不會自己去查每個 Bot 的記憶。若跳過這一步，封裝仍會完成，Level_6 只會標成「未匯出」。Antigravity 環境沒有這一步。
 >
-> **English:** Before a Grok pack, each bot must write its own memory-drop JSONL. Copying that file later does not recreate platform memory.
+> **English:** Before a Grok pack, each bot writes its memories into the memory-drop directory. The pack stores those files and does not load them for the bot.
 >
-> **日本語:** Grok の梱包前に、各 Bot が自分の memory-drop JSONL を書き出します。ファイルをコピーしただけではプラットフォームのメモリにはなりません。
+> **日本語:** Grok を梱包する前に、各 Bot が memory-drop ディレクトリへ記憶を書き出します。梱包はファイルを収めるだけで、Bot のメモリ機能は呼びません。
 
 請先對**每一個** Bot 發送（把 `$MEMORY_DROP` 換成實際目錄，預設 `$GROK_WORKSPACE/exports/memory-drop`）：
 
 ```text
-Use your memory tool to list every fact you are allowed to see, across tiers and scopes, including older records. Write the full facts, not summaries, as UTF-8 JSONL (one JSON object per line) under $MEMORY_DROP/agents/<your-agent-uuid>/. Each object needs date, tier (profile, log, or note), scope, source, and a non-empty fact. If you can export shared user memory, also write $MEMORY_DROP/shared-user/memory-user.jsonl. If you actually searched and found no facts, write memory-status.json beside the JSONL with status "no_memories", your agent_id, and a timezone-aware checked_at_utc. Do not modify source memories, and do not claim the export is done without checking.
+Create $MEMORY_DROP/agents/<your-agent-uuid>/ and write the bot's memories there as line-delimited JSON. Each line's fact field carries that memory's text. Account-wide memories, if this bot is allowed to read them, belong in $MEMORY_DROP/shared-user/memory-user.jsonl using the same line shape. When the lookup has no rows worth saving, place memory-status.json in that same folder; a blank data file is not a substitute. Do not alter the memories stored by the bot, and report the paths you created.
 ```
 
-目錄形狀：
+路徑只有兩處。個別 Bot 寫在 `agents/<agent-uuid>/` 底下的 `.jsonl`。帳號共用的寫在 `shared-user/memory-user.jsonl`。查過但沒有內容時，在同一層加上 `memory-status.json`；封裝程式只認這個檔案是否存在。
 
-```text
-memory-drop/
-├── shared-user/memory-user.jsonl
-└── agents/<agent-uuid>/*.jsonl
-```
-
-還原時這些檔只會變成 `.incoming` 與 `MANUAL_REBUILD.md`。目標 Bot 必須用自己的記憶工具重新匯入每一條 `fact`；複製檔案不會變成平台記憶。
+還原時這些檔只會變成 `.incoming` 與 `MANUAL_REBUILD.md`。目標 Bot 要自己把每一條 `fact` 讀進記憶工具。封裝程式只交出檔案。
 
 ---
 

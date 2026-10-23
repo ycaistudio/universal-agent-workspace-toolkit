@@ -76,26 +76,22 @@ python workspace_toolkit.py --mode restore --uuid-map OLD=NEW --target-env exist
 
 ## 4. 🤖 Grok Bot：打包前的 memory-drop
 
-Grok 設定檔**不能**替 Bot 呼叫 RecallMemory。打包前，請在**每一個** Bot 上先匯出記憶，否則 Level_6 只會記下「未匯出」。
+打包程式不會替 Bot 查記憶。每一個 Bot 要先把記憶寫進 memory-drop 目錄，否則 Level_6 只會標成未匯出。
 
-預設目錄是 `$GROK_WORKSPACE/exports/memory-drop`（可用 `GROK_MEMORY_DROP` 或 `MEMORY_DROP` 改）：
+預設目錄是 `$GROK_WORKSPACE/exports/memory-drop`（可用 `GROK_MEMORY_DROP` 或 `MEMORY_DROP` 改）。封裝時只認下面這些路徑：
 
-```text
-memory-drop/
-├── shared-user/
-│   └── memory-user.jsonl
-└── agents/
-    └── <agent-uuid>/
-        ├── memory-profile.jsonl
-        └── memory-agent.jsonl
-```
+| 用途 | 路徑（相對於 memory-drop 根目錄） | 封裝程式怎麼用 |
+| --- | --- | --- |
+| 這個 Bot 的記憶 | `agents/<agent-uuid>/*.jsonl` | 逐行讀 JSON。`fact` 有文字才計入筆數。 |
+| 帳號共用的記憶 | `shared-user/memory-user.jsonl` | 同樣只計 `fact`。 |
+| 查過、沒有可存的內容 | 與上面檔案同一層的 `memory-status.json` | 只看檔案在不在，不解析內容。 |
 
-每一行是一個 JSON 物件，至少要有非空的 `fact`，並帶上 `date`、`tier`（`profile`、`log` 或 `note`）、`scope`、`source`。空檔不是「已經查過」。真的查完且沒有記憶時，才在同一目錄寫 `memory-status.json`（`status` 為 `no_memories`，`agent_id` 必須是該 Bot 的 id，`checked_at_utc` 為帶時區的 UTC 時間）。
+空白的 `.jsonl` 不會被當成「已經查過」。要留下查過的紀錄，請放上 `memory-status.json`。檔裡可寫 bot id 與查詢時間，給人讀；封裝報告不讀這些欄位。
 
 可直接貼給每個 Bot：
 
 ```text
-Use your memory tool to list every fact you are allowed to see, across tiers and scopes, including older records. Write the full facts, not summaries, as UTF-8 JSONL (one JSON object per line) under $MEMORY_DROP/agents/<your-agent-uuid>/. Each object needs date, tier, scope, source, and a non-empty fact. If you can export shared user memory, write $MEMORY_DROP/shared-user/memory-user.jsonl. If you searched and found nothing, write memory-status.json next to the JSONL with status "no_memories", your agent_id, and checked_at_utc. Do not change the source memories, and do not claim the export finished without checking.
+Create $MEMORY_DROP/agents/<your-agent-uuid>/ and write the bot's memories there as line-delimited JSON. Each line's fact field carries that memory's text. Account-wide memories, if this bot is allowed to read them, belong in $MEMORY_DROP/shared-user/memory-user.jsonl using the same line shape. When the lookup has no rows worth saving, place memory-status.json in that same folder; a blank data file is not a substitute. Do not alter the memories stored by the bot, and report the paths you created.
 ```
 
-還原時，這些 JSONL 只會進 `.incoming` 與手動重建清單。把檔案放到磁碟上不會重建平台記憶，必須在目標 Bot 上用它自己的記憶工具重新匯入每一條 `fact`。
+還原時，這些 JSONL 只會進 `.incoming` 與手動重建清單。目標 Bot 要自己把每一條 `fact` 讀進記憶工具；封裝程式不會代做這一步。
