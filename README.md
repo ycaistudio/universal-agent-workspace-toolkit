@@ -118,7 +118,7 @@ It provides a unified, cross-platform engine (`workspace_toolkit.py`) for:
 | **Level_4<br>Workspace Docs<br>專案工程文檔<br>プロジェクト文書** | `Level_4_Workspace_Docs/` | Markdown Notes, SOPs, Python Scripts | **🔵 Incremental Sync / 增量同步 / 増分同期**<br>🇬🇧 Syncs workspace files while preserving newer local files on target.<br>🇹🇼 工作區檔案增量同步，目標目錄已有之同名檔案保留本機最新版。<br>🇯🇵 ワークスペース文書を増分同期（移行先の新しい同名ファイルは維持）。 |
 | **Level_5<br>Heavy Media<br>龐大素材資料<br>大容量メディア** | `Level_5_Heavy_References/` | Large PDFs, Videos, Datasets (>10MB - GBs) | **⚪ Not packed / 目前不打包 / 現在は梱包しません**<br>🇬🇧 Counted in the audit but not packed. There is no splitting yet.<br>🇹🇼 只在審計表計數，目前不打包，也尚無分卷功能。<br>🇯🇵 監査表に件数のみ表示し、梱包しません。分割機能は未実装です。 |
 | **Level_6<br>Memory drop<br>記憶匯出<br>メモリ書き出し** | `Level_6_Memory_Drop/` | Grok memory-drop JSONL (`shared-user/`, `agents/<uuid>/`) | **🟣 Incoming only / 只進 incoming / incoming のみ**<br>🇬🇧 Packed. Restore does not write platform memory. Each bot imports its own `fact` lines.<br>🇹🇼 會打包。還原不寫入平台記憶，需由各 Bot 自行匯入 `fact`。<br>🇯🇵 梱包します。復元はプラットフォームのメモリを書きません。各 Bot が自分の `fact` を取り込みます。 |
-| **Level_7<br>Conversations<br>對話快照<br>会話スナップショット** | `Level_7_Conversations/` | Read-only `search-index.db` snapshot + `agent-transcripts/` | **🔒 Not restored over live data / 不覆蓋 live 資料 / 稼働中データは上書きしない**<br>🇬🇧 SQLite `backup()` snapshot plus transcripts. Never replace the live index or transcripts.<br>🇹🇼 以 SQLite `backup()` 做快照並附上逐字稿。絕不取代 live 索引或逐字稿。<br>🇯🇵 SQLite `backup()` のスナップショットとトランスクリプト。稼働中の索引や逐字稿は置き換えません。 |
+| **Level_7<br>Conversations<br>對話快照<br>会話スナップショット** | `Level_7_Conversations/` | Read-only `search-index.db` snapshot, each bot's `store.db` snapshot, + `agent-transcripts/` | **🔒 Not restored over live data / 不覆蓋 live 資料 / 稼働中データは上書きしない**<br>🇬🇧 SQLite `backup()` snapshots plus transcripts. Never replace the live index, `store.db`, or transcripts.<br>🇹🇼 以 SQLite `backup()` 做快照並附上逐字稿。絕不取代 live 索引、`store.db` 或逐字稿。<br>🇯🇵 SQLite `backup()` のスナップショットとトランスクリプト。稼働中の索引、`store.db`、逐字稿は置き換えません。 |
 | **Level_8<br>Cursor stores<br>實驗性清單<br>実験的一覧** | `Level_8_Cursor_Stores_Experimental/` | `/cursor/stores` when `--include-cursor-stores` is set | **Opt-in / 選擇性 / 任意**<br>🇬🇧 Contents are packed only with that flag. Restore does not write `/cursor/stores`.<br>🇹🇼 只有加上該旗標才打包內容。還原不寫回 `/cursor/stores`。<br>🇯🇵 そのフラグがあるときだけ中身を梱包します。復元は `/cursor/stores` を書きません。 |
 
 
@@ -133,12 +133,12 @@ It provides a unified, cross-platform engine (`workspace_toolkit.py`) for:
 | Level | What is packed |
 | :--- | :--- |
 | 1 | `profile.json`, `avatar.*`, `group.json`; workspace files named `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `.clinerules` |
-| 2 | `settings.json`, `automations/`, other files in the bot directory, loose files directly under `agents/`, and folders under `agents/` whose names are not agent ids |
+| 2 | `settings.json`, `automations/` (an empty `automations/` is reported as routines 0), other files in the bot directory, loose files directly under `agents/`, and folders under `agents/` whose names are not agent ids. `store.db` is not packed at this level |
 | 3 | `agent-data/workflows/` only |
 | 4 | other workspace files; each bot's `notes/`, `reference/`, `attachments/`, `private/`; `agent-data/projects/` |
 | 5 | Counted, not packed: larger than 10 MiB, or suffix `.mp4` `.mov` `.avi` `.iso` `.dmg` `.tar` `.gz`. Levels 1, 3, 6, 7, and 8 are not moved here |
 | 6 | Files already in the memory-drop directory (JSONL, and other files there such as `memory-status.json`), plus `agent-data/user-memory/` and each bot's `memory/` |
-| 7 | SQLite `backup()` of `agent-data/search-index.db`, stored as `search-index-snapshot.db`, plus `agent-transcripts/` |
+| 7 | SQLite `backup()` of `agent-data/search-index.db`, stored as `search-index-snapshot.db`; each bot's `store.db`, stored as `agent-stores/<id>/store-snapshot.db` (`store.db-wal` and `store.db-shm` are omitted); plus `agent-transcripts/`. The pre-pack audit counts these snapshots and `conversation-stats.json` |
 | 8 | `/cursor/stores` only with `--include-cursor-stores` |
 
 Left out unless you opt in:
@@ -148,10 +148,12 @@ Left out unless you opt in:
 * Directories named `sand-subagent-*`, unless `--include-subagents` or `INCLUDE_SUBAGENTS=1`.
 * File contents under `/cursor/stores`, unless `--include-cursor-stores`. Without that flag the manifest records names only.
 * Symlinks. They are not followed.
+* Any directory that contains `pyvenv.cfg`, and any directory named `site-packages`. `node_modules` stays excluded. `INCLUDE_BULKY_DIRS=1` does not bring these back.
+* `package-lock.json`, `tokenizer_config.json`, `tokenizer.json`, and the other lockfile names in the packer are copied as they are. JSON key redaction does not rewrite them. Password/token warnings in the manifest are one row per folder and reason, with a count, instead of one row per file.
 
-`--encrypt` runs OpenSSL `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt`. The passphrase is `UAWT_ENCRYPT_PASSPHRASE` or a prompt, never a command-line argument. OpenSSL must be on `PATH`. Success deletes the plaintext zip and leaves `*.zip.enc` (mode `600`). Failure leaves the plaintext zip and exits with an error.
+`--encrypt` is off unless you pass the flag. It runs OpenSSL `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt`, then stores an HMAC-SHA256 of that ciphertext (encrypt-then-MAC; the MAC key is PBKDF2-HMAC-SHA256, 200000 iterations, its own salt). The passphrase is `UAWT_ENCRYPT_PASSPHRASE` or a prompt, never a command-line argument. OpenSSL must be on `PATH`. Success deletes the plaintext zip and leaves `*.zip.enc` (mode `600`). Failure leaves the plaintext zip and exits with an error. A wrong passphrase or a modified ciphertext stops restore before any decrypted file is written. An older `*.zip.enc` that is raw OpenSSL output, with no `UAWTENC1` header, is rejected. Pack it again with this version.
 
-Restore asks for two confirmations. If `--target-env` is omitted, it also asks whether the destination is fresh or existing. `-y` skips those questions and treats a missing `--target-env` as `existing`. Before writing, any live file that would be overwritten is copied into `.grok-pre-restore-snapshot_*` in the workspace, with `ROLLBACK.txt`. Level 4 workspace files are written in place. `workflows/` is written when the agent-data directory exists; otherwise those skills stay in the kit. With `--target-env fresh`, workspace files named `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, and `.clinerules` are written in place; with `existing` they are saved as `<name>.incoming`. `profile.json`, `settings.json`, `group.json`, and `avatar.*` become `.incoming` sidecars only inside a bot directory that already exists. Files under `automations/` become sidecars only when that `automations/` directory exists. A memory-drop file directly under `shared-user/` is saved as `<name>.incoming` inside `user-memory/` when that directory exists. A memory-drop file at `agents/<uuid>/<name>` (that file itself, not a file in a deeper folder) is saved as `<name>.incoming` in that bot directory when the directory exists. Copies of `agent-data/user-memory/` and of each bot's `memory/` stay in the kit. The packed tree and `MANUAL_REBUILD.md` always go to `.grok-restore-incoming/<tracking-id>/`. Live `profile.json`, settings, routines, `search-index.db`, transcripts, and `/cursor/stores` are left as they are. A missing bot directory is not created. `--uuid-map OLD=NEW` (repeat the flag) or `--uuid-map-file` (a JSON object of old id to new id) rewrites agent ids in text files. Recorded workspace and agent-data paths in those text files are rewritten to the destination. Both ids must be a hyphenated UUID or 32 hex digits. A pair that names the same id twice is ignored. The snapshot database file is left byte-for-byte. Grok restore runs when `package_manifest.json` contains `"profile": "grok"`.
+Restore asks for two confirmations. If `--target-env` is omitted, it also asks whether the destination is fresh or existing. `-y` skips those questions and treats a missing `--target-env` as `existing`. Before writing, any live file that would be overwritten is copied into `.grok-pre-restore-snapshot_*` in the workspace, with `ROLLBACK.txt`. Level 4 workspace files are written in place. `workflows/` is written when the agent-data directory exists; otherwise those skills stay in the kit. With `--target-env fresh`, workspace files named `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, and `.clinerules` are written in place; with `existing` they are saved as `<name>.incoming`. `profile.json`, `settings.json`, `group.json`, and `avatar.*` become `.incoming` sidecars only inside a bot directory that already exists. Files under `automations/` become sidecars only when that `automations/` directory exists. A memory-drop file directly under `shared-user/` is saved as `<name>.incoming` inside `user-memory/` when that directory exists. A memory-drop file at `agents/<uuid>/<name>` (that file itself, not a file in a deeper folder) is saved as `<name>.incoming` in that bot directory when the directory exists. Copies of `agent-data/user-memory/` and of each bot's `memory/` stay in the kit. The packed tree and `MANUAL_REBUILD.md` always go to `.grok-restore-incoming/<tracking-id>/`. Live `profile.json`, settings, routines, `search-index.db`, `store.db`, transcripts, and `/cursor/stores` are left as they are. A missing bot directory is not created. `--uuid-map OLD=NEW` (repeat the flag) or `--uuid-map-file` (a JSON object of old id to new id) rewrites agent ids in text files. Recorded workspace and agent-data paths in those text files are rewritten to the destination. Both ids must be a hyphenated UUID or 32 hex digits. A pair that names the same id twice is ignored. The snapshot database file is left byte-for-byte. Grok restore runs when `package_manifest.json` contains `"profile": "grok"`.
 
 | Variable | Also reads | Default |
 | :--- | :--- | :--- |
@@ -162,7 +164,7 @@ Restore asks for two confirmations. If `--target-env` is omitted, it also asks w
 | `UAWT_PROFILE` | | used only when `--profile` is omitted |
 | `UAWT_ENCRYPT_PASSPHRASE` | | prompt, when `--encrypt` is set and this is empty |
 | `INCLUDE_SUBAGENTS` | | `0`; `1` is the same as `--include-subagents` |
-| `INCLUDE_BULKY_DIRS` | | `0` skips directories whose names start with `.venv`; `1` packs them. Any other value exits |
+| `INCLUDE_BULKY_DIRS` | | `0` skips directories whose names start with `.venv`; `1` packs those. `pyvenv.cfg` directories, `site-packages`, and `node_modules` are always skipped. Any other value exits |
 
 The packer does not ask a bot for memories. Each bot must already have written its memory-drop files. See `AI_GUIDED_WIZARD_PROMPTS.md`.
 
@@ -175,7 +177,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 Pack writes `./migration_output` unless `--output-dir` is set. Restore reads `./migration_output` unless `--input-dir` is set. If that path is missing, restore uses the current directory.
 
-**Limitations.** `tests/test_grok_profile.py` uses a synthetic directory. This profile has not been run on a live Grok Bot host. `/cursor/stores` is experimental and was not checked against a live Pages layout. Restore does not write Pages or `/cursor/stores`. AES-256-CBC, with the flags above, has no integrity tag. After a successful decrypt, each extracted file is checked against the SHA-256 stored in the manifest. That check does not authenticate the ciphertext.
+**Limitations.** `tests/test_grok_profile.py` uses a synthetic directory. A read-only pack on one Grok Bot host is what surfaced the virtualenv, `store.db`, and per-folder warning fixes; restore has not been run on that host. `/cursor/stores` is experimental and was not checked against a live Pages layout. Restore does not write Pages, `/cursor/stores`, or a live `store.db`. `--encrypt` stays off unless the flag is set. The HMAC checks the ciphertext before decrypt. After decrypt, each extracted file is checked against the SHA-256 stored in the manifest.
 
 ### 🇹🇼 繁體中文
 
@@ -184,12 +186,12 @@ Pack writes `./migration_output` unless `--output-dir` is set. Restore reads `./
 | 層級 | 打包內容 |
 | :--- | :--- |
 | 1 | `profile.json`、`avatar.*`、`group.json`；工作區裡名為 `AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` 的檔案 |
-| 2 | `settings.json`、`automations/`、該 Bot 目錄裡的其他檔案、直接放在 `agents/` 下的檔案，以及 `agents/` 下名稱不是 agent id 的資料夾 |
+| 2 | `settings.json`、`automations/`（空的 `automations/` 會回報 routines 0）、該 Bot 目錄裡的其他檔案、直接放在 `agents/` 下的檔案，以及 `agents/` 下名稱不是 agent id 的資料夾。`store.db` 不在這一層打包 |
 | 3 | 只有 `agent-data/workflows/` |
 | 4 | 其餘工作區檔案；各 Bot 的 `notes/`、`reference/`、`attachments/`、`private/`；`agent-data/projects/` |
 | 5 | 只計數、不打包：大於 10 MiB，或副檔名 `.mp4` `.mov` `.avi` `.iso` `.dmg` `.tar` `.gz`。Level 1、3、6、7、8 不會被改列到這裡 |
 | 6 | memory-drop 目錄裡已經存在的檔案（JSONL，以及同目錄的其他檔，例如 `memory-status.json`），加上 `agent-data/user-memory/` 與各 Bot 的 `memory/` |
-| 7 | 對 `agent-data/search-index.db` 做 SQLite `backup()`，存成 `search-index-snapshot.db`，並附上 `agent-transcripts/` |
+| 7 | 對 `agent-data/search-index.db` 做 SQLite `backup()`，存成 `search-index-snapshot.db`；各 Bot 的 `store.db` 存成 `agent-stores/<id>/store-snapshot.db`（不含 `store.db-wal` 與 `store.db-shm`）；並附上 `agent-transcripts/`。打包前的審計會計入這些快照與 `conversation-stats.json` |
 | 8 | 只有加上 `--include-cursor-stores` 才打包 `/cursor/stores` |
 
 預設排除、要另外打開的項目：
@@ -199,10 +201,12 @@ Pack writes `./migration_output` unless `--output-dir` is set. Restore reads `./
 * 名為 `sand-subagent-*` 的目錄，除非 `--include-subagents` 或 `INCLUDE_SUBAGENTS=1`。
 * `/cursor/stores` 的檔案內容，除非 `--include-cursor-stores`。沒有這個旗標時，清單只記錄名稱。
 * 符號連結。打包時不跟隨。
+* 內含 `pyvenv.cfg` 的目錄，以及名為 `site-packages` 的目錄。`node_modules` 仍然排除。`INCLUDE_BULKY_DIRS=1` 不會把它們加回來。
+* `package-lock.json`、`tokenizer_config.json`、`tokenizer.json` 與打包程式裡的其他 lockfile 名稱會原樣複製，JSON 鍵值替換不會改寫它們。清單裡的密碼/Token 警告是每個資料夾、每種原因一列並附上數量，不是每個檔案一列。
 
-`--encrypt` 呼叫 OpenSSL `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt`。密碼放在 `UAWT_ENCRYPT_PASSPHRASE` 或提示輸入，不接受命令列參數。系統 `PATH` 上要有 OpenSSL。成功時刪除明文 zip、留下 `*.zip.enc`（權限 `600`）。失敗時保留明文 zip 並以錯誤結束。
+`--encrypt` 預設關閉，要加上旗標才會執行。它呼叫 OpenSSL `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt`，再為該密文存放 HMAC-SHA256（先加密再做 MAC；MAC 金鑰是 PBKDF2-HMAC-SHA256、200000 次、自有 salt）。密碼放在 `UAWT_ENCRYPT_PASSPHRASE` 或提示輸入，不接受命令列參數。系統 `PATH` 上要有 OpenSSL。成功時刪除明文 zip、留下 `*.zip.enc`（權限 `600`）。失敗時保留明文 zip 並以錯誤結束。密碼錯誤或密文被改過時，還原會在寫出任何解密檔之前停止。舊版直接寫出的 OpenSSL 密文（沒有 `UAWTENC1` 標頭）會被拒絕，需要用這個版本重新打包。
 
-還原會做兩次確認。若省略 `--target-env`，還會先問目的地是全新還是既有環境。`-y` 跳過這些提問，並把省略的 `--target-env` 當成 `existing`。寫入前，任何會被覆蓋的既有檔案會先複製到工作區的 `.grok-pre-restore-snapshot_*`，並附上 `ROLLBACK.txt`。Level 4 的工作區檔案直接寫入原位。agent-data 目錄存在時寫入 `workflows/`；否則那些技能留在還原套件裡。`--target-env fresh` 時，名為 `AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` 的工作區檔案寫入原位；`existing` 時存成 `<name>.incoming`。`profile.json`、`settings.json`、`group.json` 與 `avatar.*` 只有在該 Bot 目錄已經存在時才寫成 `.incoming`。`automations/` 底下的檔案，只有該 `automations/` 目錄存在時才寫成附檔。直接放在 `shared-user/` 下的 memory-drop 檔，會在 `user-memory/` 存在時存成 `<name>.incoming`。路徑為 `agents/<uuid>/<name>` 的 memory-drop 檔（該檔本身，不含更深的子目錄）會在該 Bot 目錄存在時存成 `<name>.incoming`。`agent-data/user-memory/` 的複本，以及各 Bot 的 `memory/`，留在套件裡。封裝樹與 `MANUAL_REBUILD.md` 一律放到 `.grok-restore-incoming/<tracking-id>/`。live 的 `profile.json`、設定、例行工作、`search-index.db`、逐字稿與 `/cursor/stores` 維持原樣。不會建立不存在的 Bot 目錄。`--uuid-map OLD=NEW`（可重複）或 `--uuid-map-file`（舊 id 對新 id 的 JSON 物件）會改寫文字檔裡的 Bot id。那些文字檔裡記錄的工作區與 agent-data 路徑會改成目的地路徑。兩個 id 都必須是帶連字號的 UUID 或 32 位十六進位。兩個 id 相同的一對會被略過。快照資料庫檔的位元組保持原樣。`package_manifest.json` 含有 `"profile": "grok"` 時走 Grok 還原。
+還原會做兩次確認。若省略 `--target-env`，還會先問目的地是全新還是既有環境。`-y` 跳過這些提問，並把省略的 `--target-env` 當成 `existing`。寫入前，任何會被覆蓋的既有檔案會先複製到工作區的 `.grok-pre-restore-snapshot_*`，並附上 `ROLLBACK.txt`。Level 4 的工作區檔案直接寫入原位。agent-data 目錄存在時寫入 `workflows/`；否則那些技能留在還原套件裡。`--target-env fresh` 時，名為 `AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` 的工作區檔案寫入原位；`existing` 時存成 `<name>.incoming`。`profile.json`、`settings.json`、`group.json` 與 `avatar.*` 只有在該 Bot 目錄已經存在時才寫成 `.incoming`。`automations/` 底下的檔案，只有該 `automations/` 目錄存在時才寫成附檔。直接放在 `shared-user/` 下的 memory-drop 檔，會在 `user-memory/` 存在時存成 `<name>.incoming`。路徑為 `agents/<uuid>/<name>` 的 memory-drop 檔（該檔本身，不含更深的子目錄）會在該 Bot 目錄存在時存成 `<name>.incoming`。`agent-data/user-memory/` 的複本，以及各 Bot 的 `memory/`，留在套件裡。封裝樹與 `MANUAL_REBUILD.md` 一律放到 `.grok-restore-incoming/<tracking-id>/`。live 的 `profile.json`、設定、例行工作、`search-index.db`、`store.db`、逐字稿與 `/cursor/stores` 維持原樣。不會建立不存在的 Bot 目錄。`--uuid-map OLD=NEW`（可重複）或 `--uuid-map-file`（舊 id 對新 id 的 JSON 物件）會改寫文字檔裡的 Bot id。那些文字檔裡記錄的工作區與 agent-data 路徑會改成目的地路徑。兩個 id 都必須是帶連字號的 UUID 或 32 位十六進位。兩個 id 相同的一對會被略過。快照資料庫檔的位元組保持原樣。`package_manifest.json` 含有 `"profile": "grok"` 時走 Grok 還原。
 
 | 變數 | 也接受 | 預設 |
 | :--- | :--- | :--- |
@@ -213,7 +217,7 @@ Pack writes `./migration_output` unless `--output-dir` is set. Restore reads `./
 | `UAWT_PROFILE` | | 只有省略 `--profile` 時才使用 |
 | `UAWT_ENCRYPT_PASSPHRASE` | | 有 `--encrypt` 且此變數是空的時候改為提示輸入 |
 | `INCLUDE_SUBAGENTS` | | `0`；`1` 等同 `--include-subagents` |
-| `INCLUDE_BULKY_DIRS` | | `0` 略過名稱以 `.venv` 開頭的目錄；`1` 會打包。其他值會結束程式 |
+| `INCLUDE_BULKY_DIRS` | | `0` 略過名稱以 `.venv` 開頭的目錄；`1` 會打包那些目錄。含 `pyvenv.cfg` 的目錄、`site-packages` 與 `node_modules` 一律略過。其他值會結束程式 |
 
 封裝程式不會替 Bot 查記憶。每個 Bot 要事先把 memory-drop 寫好。見 `AI_GUIDED_WIZARD_PROMPTS.md`。
 
@@ -226,7 +230,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 未指定 `--output-dir` 時，打包寫入 `./migration_output`。未指定 `--input-dir` 時，還原讀取 `./migration_output`。該路徑不存在時，還原改用目前目錄。
 
-**限制。** `tests/test_grok_profile.py` 用的是合成目錄。此設定檔尚未在 live Grok Bot 主機上執行。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages 或 `/cursor/stores`。上面的 AES-256-CBC 參數沒有完整性標記。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。這項檢查不驗證密文。
+**限制。** `tests/test_grok_profile.py` 用的是合成目錄。有一次在 Grok Bot 主機上做過唯讀打包，因而發現虛擬環境、`store.db` 與警告清單過大的問題；該主機上還沒有執行還原。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages、`/cursor/stores` 或正在使用的 `store.db`。`--encrypt` 沒有旗標就保持關閉。HMAC 會在解密前檢查密文。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。
 
 ### 🇯🇵 日本語
 
@@ -235,12 +239,12 @@ python workspace_toolkit.py --mode restore --target-env existing \
 | レベル | 梱包するもの |
 | :--- | :--- |
 | 1 | `profile.json`、`avatar.*`、`group.json`。ワークスペース内の `AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` |
-| 2 | `settings.json`、`automations/`、その Bot ディレクトリ内のその他のファイル、`agents/` 直下のファイル、名前が agent id ではない `agents/` 配下のフォルダ |
+| 2 | `settings.json`、`automations/`（空の `automations/` は routines 0 と報告）、その Bot ディレクトリ内のその他のファイル、`agents/` 直下のファイル、名前が agent id ではない `agents/` 配下のフォルダ。`store.db` はこのレベルには入れない |
 | 3 | `agent-data/workflows/` のみ |
 | 4 | それ以外のワークスペースファイル。各 Bot の `notes/`、`reference/`、`attachments/`、`private/`。`agent-data/projects/` |
 | 5 | 件数のみで梱包しない: 10 MiB を超えるファイル、または拡張子 `.mp4` `.mov` `.avi` `.iso` `.dmg` `.tar` `.gz`。Level 1、3、6、7、8 はここへ移さない |
 | 6 | memory-drop ディレクトリに既にあるファイル（JSONL と、`memory-status.json` のような同じ場所の他のファイル）、加えて `agent-data/user-memory/` と各 Bot の `memory/` |
-| 7 | `agent-data/search-index.db` の SQLite `backup()` を `search-index-snapshot.db` として保存し、`agent-transcripts/` も同梱 |
+| 7 | `agent-data/search-index.db` の SQLite `backup()` を `search-index-snapshot.db` として保存。各 Bot の `store.db` は `agent-stores/<id>/store-snapshot.db`（`store.db-wal` と `store.db-shm` は含めない）。`agent-transcripts/` も同梱。パック前の監査はこれらのスナップショットと `conversation-stats.json` を件数に含める |
 | 8 | `--include-cursor-stores` を付けたときだけ `/cursor/stores` |
 
 既定では入れず、指定したときだけ入れるもの:
@@ -250,10 +254,12 @@ python workspace_toolkit.py --mode restore --target-env existing \
 * 名前が `sand-subagent-*` のディレクトリ。`--include-subagents` または `INCLUDE_SUBAGENTS=1` のときだけ含めます。
 * `/cursor/stores` のファイル中身。`--include-cursor-stores` が無いときは、マニフェストに名前だけを記録します。
 * シンボリックリンク。辿りません。
+* `pyvenv.cfg` を含むディレクトリと、名前が `site-packages` のディレクトリ。`node_modules` も除外したままです。`INCLUDE_BULKY_DIRS=1` では戻りません。
+* `package-lock.json`、`tokenizer_config.json`、`tokenizer.json`、およびパッカーが知る他の lockfile 名はそのままコピーします。JSON の鍵の置換はこれらを書き換えません。マニフェストのパスワード/トークン警告は、ファイルごとではなく、フォルダと理由ごとの件数です。
 
-`--encrypt` は OpenSSL の `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt` を実行します。パスフレーズは `UAWT_ENCRYPT_PASSPHRASE` かプロンプトで、引数では受け取りません。`PATH` 上に OpenSSL が必要です。成功すると平文 zip を消し、`*.zip.enc`（モード `600`）を残します。失敗すると平文 zip を残してエラーで終了します。
+`--encrypt` はフラグを付けたときだけ動きます。OpenSSL の `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt` を実行し、その暗号文の HMAC-SHA256 を保存します（encrypt-then-MAC。MAC 鍵は PBKDF2-HMAC-SHA256、200000 回、専用の salt）。パスフレーズは `UAWT_ENCRYPT_PASSPHRASE` かプロンプトで、引数では受け取りません。`PATH` 上に OpenSSL が必要です。成功すると平文 zip を消し、`*.zip.enc`（モード `600`）を残します。失敗すると平文 zip を残してエラーで終了します。パスフレーズが違う、または暗号文が変わっているときは、復号したファイルを書く前に復元を止めます。以前の版がそのまま書いた OpenSSL の暗号文（`UAWTENC1` ヘッダが無いもの）は拒否します。この版でパックし直してください。
 
-復元は確認を 2 回求めます。`--target-env` を省略したときは、移行先が新規か既存かも尋ねます。`-y` はこれらの質問を飛ばし、省略された `--target-env` を `existing` として扱います。書き込む前に、上書きされる既存ファイルをワークスペースの `.grok-pre-restore-snapshot_*` へコピーし、`ROLLBACK.txt` を置きます。Level 4 のワークスペースファイルはその場所へ書きます。agent-data ディレクトリがあるときは `workflows/` を書き、無いときはそのスキルをキットに残します。`--target-env fresh` では、`AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` という名前のワークスペースファイルをその場所へ書きます。`existing` では `<name>.incoming` として保存します。`profile.json`、`settings.json`、`group.json`、`avatar.*` は、その Bot ディレクトリが既にあるときだけ `.incoming` になります。`automations/` 配下のファイルは、その `automations/` ディレクトリがあるときだけサイドカーになります。`shared-user/` 直下の memory-drop ファイルは、`user-memory/` があるとき `<name>.incoming` として保存します。`agents/<uuid>/<name>` にある memory-drop ファイル（そのファイル自体。より深いフォルダ内のファイルは対象外）は、その Bot ディレクトリがあるとき `<name>.incoming` として保存します。`agent-data/user-memory/` のコピーと、各 Bot の `memory/` はキットに残します。梱包ツリーと `MANUAL_REBUILD.md` は必ず `.grok-restore-incoming/<tracking-id>/` に置きます。稼働中の `profile.json`、設定、ルーチン、`search-index.db`、トランスクリプト、`/cursor/stores` はそのまま残します。無い Bot ディレクトリは作りません。`--uuid-map OLD=NEW`（繰り返し可）または `--uuid-map-file`（旧 id から新 id への JSON オブジェクト）は、テキスト中の Bot id を書き換えます。それらのテキストに記録されたワークスペースと agent-data のパスは、移行先のパスに書き換えます。両方の id はハイフン付き UUID か 32 桁の十六進です。同じ id を二度書いた組は無視します。スナップショットのデータベースファイルのバイト列はそのままです。`package_manifest.json` に `"profile": "grok"` があるとき、Grok の復元を実行します。
+復元は確認を 2 回求めます。`--target-env` を省略したときは、移行先が新規か既存かも尋ねます。`-y` はこれらの質問を飛ばし、省略された `--target-env` を `existing` として扱います。書き込む前に、上書きされる既存ファイルをワークスペースの `.grok-pre-restore-snapshot_*` へコピーし、`ROLLBACK.txt` を置きます。Level 4 のワークスペースファイルはその場所へ書きます。agent-data ディレクトリがあるときは `workflows/` を書き、無いときはそのスキルをキットに残します。`--target-env fresh` では、`AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` という名前のワークスペースファイルをその場所へ書きます。`existing` では `<name>.incoming` として保存します。`profile.json`、`settings.json`、`group.json`、`avatar.*` は、その Bot ディレクトリが既にあるときだけ `.incoming` になります。`automations/` 配下のファイルは、その `automations/` ディレクトリがあるときだけサイドカーになります。`shared-user/` 直下の memory-drop ファイルは、`user-memory/` があるとき `<name>.incoming` として保存します。`agents/<uuid>/<name>` にある memory-drop ファイル（そのファイル自体。より深いフォルダ内のファイルは対象外）は、その Bot ディレクトリがあるとき `<name>.incoming` として保存します。`agent-data/user-memory/` のコピーと、各 Bot の `memory/` はキットに残します。梱包ツリーと `MANUAL_REBUILD.md` は必ず `.grok-restore-incoming/<tracking-id>/` に置きます。稼働中の `profile.json`、設定、ルーチン、`search-index.db`、`store.db`、トランスクリプト、`/cursor/stores` はそのまま残します。無い Bot ディレクトリは作りません。`--uuid-map OLD=NEW`（繰り返し可）または `--uuid-map-file`（旧 id から新 id への JSON オブジェクト）は、テキスト中の Bot id を書き換えます。それらのテキストに記録されたワークスペースと agent-data のパスは、移行先のパスに書き換えます。両方の id はハイフン付き UUID か 32 桁の十六進です。同じ id を二度書いた組は無視します。スナップショットのデータベースファイルのバイト列はそのままです。`package_manifest.json` に `"profile": "grok"` があるとき、Grok の復元を実行します。
 
 | 変数 | 併読 | 既定 |
 | :--- | :--- | :--- |
@@ -264,7 +270,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 | `UAWT_PROFILE` | | `--profile` を省略したときだけ使う |
 | `UAWT_ENCRYPT_PASSPHRASE` | | `--encrypt` で空ならプロンプト |
 | `INCLUDE_SUBAGENTS` | | `0`。`1` は `--include-subagents` と同じ |
-| `INCLUDE_BULKY_DIRS` | | `0` は名前が `.venv` で始まるディレクトリを省く。`1` は梱包する。それ以外は終了する |
+| `INCLUDE_BULKY_DIRS` | | `0` は名前が `.venv` で始まるディレクトリを省く。`1` はそれらを梱包する。`pyvenv.cfg` があるディレクトリ、`site-packages`、`node_modules` は常に省く。それ以外の値は終了する |
 
 パッキングは Bot に記憶を問い合わせません。各 Bot が memory-drop を先に書いておく必要があります。`AI_GUIDED_WIZARD_PROMPTS.md` を参照してください。
 
@@ -277,7 +283,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 `--output-dir` が無いとき、パックは `./migration_output` に書きます。`--input-dir` が無いとき、復元は `./migration_output` を読みます。そのパスが無いときは、復元はカレントディレクトリを使います。
 
-**制限。** `tests/test_grok_profile.py` は合成ディレクトリです。このプロファイルは live の Grok Bot ホストでは未実行です。`/cursor/stores` は実験的で、live の Pages 配置とは照合していません。復元は Pages も `/cursor/stores` も書きません。上の AES-256-CBC には完全性タグがありません。復号に成功したあと、展開した各ファイルをマニフェストの SHA-256 と照合します。この照合は暗号文を認証しません。
+**制限。** `tests/test_grok_profile.py` は合成ディレクトリです。Grok Bot ホストで読み取り専用のパックを一度実行し、仮想環境、`store.db`、警告一覧の大きさが見つかりました。そのホストでは復元は未実行です。`/cursor/stores` は実験的で、live の Pages 配置とは照合していません。復元は Pages、`/cursor/stores`、稼働中の `store.db` を書きません。`--encrypt` はフラグが無い限りオフです。HMAC は復号の前に暗号文を確認します。復号に成功したあと、展開した各ファイルをマニフェストの SHA-256 と照合します。
 
 ---
 
@@ -487,7 +493,7 @@ universal-agent-workspace-toolkit/
 ├── toolkit_pack.py               # Staging, Manifest & Zip Engine (階梯封裝引擎 / パッケージ化エンジン)
 ├── toolkit_restore.py            # Impact Report, Snapshot & Deployer (衝擊評估與還原引擎 / リストアエンジン)
 ├── toolkit_grok.py               # Grok Bot profile: scan, pack, conservative restore
-├── toolkit_crypto.py             # Optional OpenSSL AES-256-CBC encryption (--encrypt)
+├── toolkit_crypto.py             # Optional --encrypt: AES-256-CBC plus HMAC-SHA256 (off by default)
 ├── tests/                        # Synthetic Grok box + Antigravity regression
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
@@ -506,16 +512,16 @@ universal-agent-workspace-toolkit/
 * **Restore**: uses only the newest package it finds (by `created_at`), extracts to a fresh temporary folder that is deleted afterwards, and always creates a rollback snapshot (with or without `-y`) of everything it may overwrite. Same-named skill files and workspace documents are overwritten; in `existing` mode `AGENTS.md` and MCP config are kept and the incoming copies saved as `.incoming`.
 * **IDE settings**: restore adds `"security.promptForLocalFileProtocolHandling": false` to the settings of IDEs already installed on the target (pass `--skip-ide-protocol-patch` to disable). Files that are not plain JSON (for example VS Code settings with comments) are never edited; the line to add is printed instead. A backup `settings.json.bak-<time>` is made before any edit.
 * **Level 5** heavy media is counted in the audit but not packed.
-* **Status**: verified on the Google Antigravity directory layout. The Grok Bot profile is covered by `tests/test_grok_profile.py` on a synthetic box, not a live Grok Bot host. `/cursor/stores` listing is experimental. Other agents are untested. Automated tests were run on Linux only.
+* **Status**: verified on the Google Antigravity directory layout. The Grok Bot profile is covered by `tests/test_grok_profile.py` on a synthetic box. A read-only pack was also run on one Grok Bot host; restore has not been run there. `/cursor/stores` listing is experimental. Other agents are untested. Automated tests were run on Linux only.
 
 * **機密**：預設不打包已知憑證檔案、私鑰區塊與真實格式的 API Token，MCP 機密值以 `__REDACTED_RESTORE_MANUALLY__` 取代；加上 `--include-secrets` 即可一併帶走。所有排除與遮蔽項目都列在封裝報告與 `package_manifest.json`。封裝檔完成後的保管由使用者負責。
 * **還原**：只使用找到的最新封裝（依 `created_at`），解壓到每次全新的暫存資料夾並於結束後刪除；不論是否加 `-y`，都會先為可能被覆寫的內容建立還原快照。同名技能檔案與工作區文件會被覆寫；`existing` 模式下 `AGENTS.md` 與 MCP 設定保留，封裝版本另存為 `.incoming`。
 * **IDE 設定**：還原時會在目標電腦已安裝的 IDE 設定中加入 `"security.promptForLocalFileProtocolHandling": false`（可用 `--skip-ide-protocol-patch` 關閉）。不是純 JSON 的檔案（例如含註解的 VS Code 設定）不會被修改，只會印出要手動加入的行；修改前會先備份為 `settings.json.bak-<時間>`。
 * **Level 5** 大檔只在審計表計數，不打包。
-* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔由 `tests/test_grok_profile.py` 以合成目錄測試，尚未在 live Grok Bot 主機執行。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
+* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔由 `tests/test_grok_profile.py` 以合成目錄測試。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
 
 * **機密情報**：既定では既知の認証情報ファイル、秘密鍵ブロック、実在形式の API トークンは梱包されず、MCP の機密値は `__REDACTED_RESTORE_MANUALLY__` に置換されます。`--include-secrets` を付けると含められます。除外・置換した項目は、パック時のレポートと `package_manifest.json` に一覧表示されます。作成後のパッケージの管理はユーザーの責任です。
 * **復元**：見つかった最新のパッケージ（`created_at` 基準）のみを使い、毎回新しい一時フォルダーに展開して終了後に削除します。`-y` の有無にかかわらず、上書きされる可能性のある内容のスナップショットを必ず作成します。同名のスキルファイルとワークスペース文書は上書きされ、`existing` モードでは `AGENTS.md` と MCP 設定が保持され、新しい版は `.incoming` として保存されます。
 * **IDE 設定**：復元時、移行先にインストール済みの IDE の設定に `"security.promptForLocalFileProtocolHandling": false` を追加します（`--skip-ide-protocol-patch` で無効化）。通常の JSON でないファイル（コメント付きの VS Code 設定など）は編集せず、追加すべき行を表示します。編集前に `settings.json.bak-<時刻>` としてバックアップします。
 * **Level 5** の大容量メディアは監査表に件数のみ表示し、梱包しません。
-* **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは `tests/test_grok_profile.py` の合成ツリーでテストしており、live の Grok Bot ホストでは未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証で、自動テストは Linux のみで実行しています。
+* **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは `tests/test_grok_profile.py` の合成ツリーでテストしています。Grok Bot ホストで読み取り専用のパックも一度実行済みで、そのホストでの復元は未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証で、自動テストは Linux のみで実行しています。

@@ -82,7 +82,7 @@ def _read_text(fp):
         return None
 
 
-def classify_file(fp, content_scan=True):
+def classify_file(fp, content_scan=True, warn_weak=True):
     """Return ("exclude" | "warn" | "ok", reason). Reasons never contain file contents."""
     name = Path(fp).name.lower()
     if name in SECRET_NAMES or name.startswith(".env") or name.endswith(SECRET_SUFFIXES):
@@ -99,7 +99,7 @@ def classify_file(fp, content_scan=True):
         return "ok", ""
     if HIGH_CONF_RE.search(text):
         return "exclude", "contains a real-format API token"
-    if WEAK_RE.search(text):
+    if warn_weak and WEAK_RE.search(text):
         return "warn", "mentions a password/token value (packed; review it)"
     return "ok", ""
 
