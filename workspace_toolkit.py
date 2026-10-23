@@ -169,7 +169,7 @@ def pack_grok(args, t, user_home, include_secrets):
     include_subagents = args.include_subagents or os.environ.get("INCLUDE_SUBAGENTS", "0") == "1"
     bulky = os.environ.get("INCLUDE_BULKY_DIRS", "0")
     if bulky not in ("0", "1"):
-        print("  ❌ INCLUDE_BULKY_DIRS must be 0 or 1")
+        print(f"  ❌ INCLUDE_BULKY_DIRS is {bulky!r}; the only accepted settings are 0 and 1")
         sys.exit(2)
     try:
         assets = scan_grok_assets(

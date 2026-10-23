@@ -150,7 +150,7 @@ openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -salt \
 
 Restore still uses the two confirmations and a rollback snapshot (`.grok-pre-restore-snapshot_*`). It writes workspace files and user skills. Profile, settings, routines, and memory-drop files are written as `.incoming` only when that bot directory already exists, and always into `.grok-restore-incoming/<id>/MANUAL_REBUILD.md`. It does not replace live `profile.json`, routines, `search-index.db`, or transcripts, and it does not create a missing bot directory. `--uuid-map OLD=NEW` (or `--uuid-map-file`) rewrites ids and recorded absolute paths in text files. The snapshot database is not rewritten.
 
-Before packing, ask every bot to export memory. The toolkit cannot call RecallMemory. See `AI_GUIDED_WIZARD_PROMPTS.md`.
+Before packing, ask every bot to write its memory-drop. This toolkit only reads the files they leave. See `AI_GUIDED_WIZARD_PROMPTS.md`.
 
 ```bash
 python workspace_toolkit.py --mode pack --profile grok -y
@@ -379,7 +379,6 @@ universal-agent-workspace-toolkit/
 ├── toolkit_grok.py               # Grok Bot profile: scan, pack, conservative restore
 ├── toolkit_crypto.py             # Optional OpenSSL AES-256-CBC encryption (--encrypt)
 ├── tests/                        # Synthetic Grok box + Antigravity regression
-├── THIRD_PARTY_NOTICES.md        # MIT notice for studied grok-bot-backup layout
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
 ├── AI_GUIDED_WIZARD_PROMPTS.md   # Natural Language Prompt Templates (自然語言引導詞 / 対話プロンプト集)
