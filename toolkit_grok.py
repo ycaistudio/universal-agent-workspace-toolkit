@@ -56,6 +56,23 @@ GROK_SECRET_FILENAMES = {
     "teach-queue-key.json",
 }
 SKIP_DIR_NAMES = set(EXCLUDED_DIRS) | {"managed-skills", "plugin-skills", ".cache"}
+# Packed as-is. JSON redaction treats any key containing "token" as a secret,
+# which rewrites tokenizer_config.json and similar lockfiles.
+LOCKFILE_NAMES = {
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "pnpm-lock.yml",
+    "composer.lock",
+    "cargo.lock",
+    "poetry.lock",
+    "gemfile.lock",
+    "packages.lock.json",
+    "tokenizer_config.json",
+    "tokenizer.json",
+}
+SQLITE_SIDECARS = {"store.db-wal", "store.db-shm"}
 # Folder and archive names from the grok-bot-export / virtual-office exporter.
 # Matched only so a leftover export inside the workspace is not packed again.
 FOREIGN_EXPORT_PREFIXES = ("grok-bot-export-", "virtual-office-")
@@ -178,6 +195,13 @@ def _skip_dir_reason(full, name, include_bulky, include_subagents, exclude_roots
         return "previous backup artifact"
     if not include_subagents and name.startswith("sand-subagent-"):
         return "sand-subagent transcript (pass --include-subagents to pack)"
+    if name == "site-packages":
+        return "site-packages directory"
+    try:
+        if (full / "pyvenv.cfg").is_file():
+            return "virtualenv (pyvenv.cfg)"
+    except OSError:
+        return "unreadable directory"
     if not include_bulky and name.startswith(".venv"):
         return "bulky directory"
     for root in exclude_roots:
@@ -268,7 +292,11 @@ def _empty_assets(paths, include_secrets):
     }
 
 
-def _add_file(assets, fp, level, arc, include_secrets, include_cursor_payload=False):
+def _lockfile(path):
+    return Path(path).name.lower() in LOCKFILE_NAMES
+
+
+def _add_file(assets, fp, level, arc, include_secrets, include_cursor_payload=False, sqlite_snapshot=False):
     fp = Path(fp)
     paths = assets["paths"]
     key = (level, arc)
@@ -282,7 +310,8 @@ def _add_file(assets, fp, level, arc, include_secrets, include_cursor_payload=Fa
             return
     payload = None
     redacted = False
-    if not include_secrets and fp.suffix.lower() == ".json":
+    lockfile = _lockfile(fp)
+    if not include_secrets and not lockfile and fp.suffix.lower() == ".json" and not sqlite_snapshot:
         try:
             text = fp.read_text(encoding="utf-8")
             new_text, count = redact_mcp_json(text)
@@ -296,8 +325,8 @@ def _add_file(assets, fp, level, arc, include_secrets, include_cursor_payload=Fa
             redacted = True
             assets["redacted"].append(fp)
             assets["flagged"].append((fp, "secret JSON values replaced"))
-    if not include_secrets and not redacted:
-        verdict, reason = classify_file(fp, content_scan=True)
+    if not include_secrets and not redacted and not sqlite_snapshot:
+        verdict, reason = classify_file(fp, content_scan=True, warn_weak=not lockfile)
         if verdict == "exclude":
             assets["excluded"].append((fp, reason))
             return
@@ -318,6 +347,7 @@ def _add_file(assets, fp, level, arc, include_secrets, include_cursor_payload=Fa
         "size": size,
         "payload": payload,
         "redacted": redacted,
+        "sqlite_snapshot": sqlite_snapshot,
     })
 
 
@@ -326,11 +356,23 @@ def _collect_agent(assets, agent_dir, include_secrets, include_bulky, include_su
     profile = _load_json(agent_dir / "profile.json") or {}
     kind = "group" if (agent_dir / "group.json").exists() else "agent"
     name = profile.get("name") or aid
-    assets["agents"].append({"id": aid, "name": name, "kind": kind})
+    record = {"id": aid, "name": name, "kind": kind, "routines": 0}
+    assets["agents"].append(record)
     for fp in _iter_files(agent_dir, include_bulky, include_subagents, exclude_roots, assets["skipped"]):
         rel = fp.relative_to(agent_dir).as_posix()
         top = rel.split("/", 1)[0]
-        if rel in {"profile.json", "group.json"} or Path(rel).name.startswith("avatar."):
+        filename = Path(rel).name
+        if top == "automations":
+            record["routines"] += 1
+        if filename in SQLITE_SIDECARS:
+            assets["skipped"].append((fp, "sqlite sidecar omitted; store.db is snapshotted into Level 7"))
+            continue
+        if filename == "store.db":
+            parent = PurePosixPath(rel).parent.as_posix()
+            snap_arc = f"agent-stores/{aid}/store-snapshot.db" if parent == "." else f"agent-stores/{aid}/{parent}/store-snapshot.db"
+            _add_file(assets, fp, L7, snap_arc, include_secrets, sqlite_snapshot=True)
+            continue
+        if rel in {"profile.json", "group.json"} or filename.startswith("avatar."):
             level, arc = L1, f"agents/{aid}/{rel}"
         elif rel == "settings.json" or top == "automations":
             level, arc = L2, f"agents/{aid}/{rel}"
@@ -537,6 +579,10 @@ def scan_grok_assets(paths, include_secrets=False, include_cursor_stores=False,
 
     if Path(paths["search_index"]).is_file():
         assets["search_index"] = Path(paths["search_index"])
+        _add_file(
+            assets, assets["search_index"], L7, "search-index-snapshot.db",
+            include_secrets, sqlite_snapshot=True,
+        )
     else:
         assets["search_index"] = None
         assets["warnings"].append(f"search-index.db not found at {paths['search_index']}")
@@ -575,8 +621,12 @@ def _write_record(src, payload, dest, staging_dir, level_number, file_manifest):
     return _record(staging_dir, dest, level_number, file_manifest)
 
 
-def _snapshot_sqlite(src, dest):
-    """Consistent snapshot via sqlite3 backup. Returns (ok, consistent, error)."""
+def _snapshot_sqlite(src, dest, allow_raw_copy=True):
+    """Consistent snapshot via sqlite3 backup. Returns (ok, consistent, error).
+
+    ``allow_raw_copy`` is only for the search index. Bot ``store.db`` files are
+    omitted when backup fails, so a half-written database is not packed.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest.unlink()
@@ -594,6 +644,10 @@ def _snapshot_sqlite(src, dest):
             src_conn.close()
         return True, True, ""
     except sqlite3.Error as exc:
+        if not allow_raw_copy:
+            if dest.exists():
+                dest.unlink()
+            return False, False, str(exc)
         try:
             if dest.exists():
                 dest.unlink()
@@ -620,6 +674,29 @@ def _message_counts(db_path):
     return {str(agent_id): count for agent_id, count in rows if agent_id is not None}
 
 
+def level_audit_count(assets, level):
+    """File count shown before packing. Level 7 includes the stats file written at pack time."""
+    count = sum(1 for item in assets["files"] if item["level"] == level)
+    if level == L7 and assets.get("search_index"):
+        count += 1
+    return count
+
+
+def summarize_flags(entries, paths):
+    """Collapse per-file password/token warnings into one row per folder and reason."""
+    groups = {}
+    for path, reason in entries:
+        display = _display(path, paths)
+        folder = PurePosixPath(display).parent.as_posix()
+        if folder in ("", "."):
+            folder = "(root)"
+        groups[(folder, reason)] = groups.get((folder, reason), 0) + 1
+    return [
+        {"folder": folder, "reason": reason, "count": count}
+        for (folder, reason), count in sorted(groups.items())
+    ]
+
+
 def run_grok_pack(assets, output_base, user_home, encrypted=False):
     """Pack a scanned Grok box. Level_5 is inventoried and not written into the zip."""
     include_secrets = assets["include_secrets"]
@@ -640,6 +717,8 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
         level_counts = {level: 0 for level in LEVEL_ORDER}
         level5 = []
         redacted = []
+        pack_warnings = list(assets["warnings"])
+        snapshots = {}
         for item in assets["files"]:
             level = item["level"]
             if level == L5:
@@ -651,7 +730,20 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
                 })
                 continue
             dest = staging_dir / level / item["arc"]
-            rel = _write_record(item["src"], item.get("payload"), dest, staging_dir, LEVEL_ORDER.index(level) + 1, file_manifest)
+            if item.get("sqlite_snapshot"):
+                allow_raw = item["arc"] == "search-index-snapshot.db"
+                ok, consistent, error = _snapshot_sqlite(item["src"], dest, allow_raw_copy=allow_raw)
+                if error:
+                    pack_warnings.append(f"sqlite snapshot {item['arc']}: {error}")
+                if not ok or not dest.is_file():
+                    pack_warnings.append(f"sqlite snapshot omitted: {item['arc']}")
+                    continue
+                rel = _record(staging_dir, dest, LEVEL_ORDER.index(level) + 1, file_manifest)
+                snapshots[item["arc"]] = {
+                    "rel": rel, "consistent": consistent, "error": error, "src": str(item["src"]),
+                }
+            else:
+                rel = _write_record(item["src"], item.get("payload"), dest, staging_dir, LEVEL_ORDER.index(level) + 1, file_manifest)
             level_counts[level] += 1
             if item.get("redacted"):
                 redacted.append(rel)
@@ -663,54 +755,63 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
             "consistent_snapshot": None,
             "agents": [],
             "platform_message_rows": 0,
+            "agent_stores": [],
             "note": (
-                "search-index-snapshot.db is a read-only copy. "
-                "Restore must not replace the live search-index.db or live agent-transcripts."
+                "search-index-snapshot.db and each store-snapshot.db are SQLite backup copies. "
+                "store.db-wal and store.db-shm are not packed. "
+                "Restore must not replace the live search-index.db, live store.db, or live agent-transcripts."
             ),
         }
-        search_index = assets.get("search_index")
-        if search_index and Path(search_index).is_file():
-            snap_path = staging_dir / L7 / "search-index-snapshot.db"
-            ok, consistent, error = _snapshot_sqlite(search_index, snap_path)
-            conversations["consistent_snapshot"] = consistent
-            if error:
-                conversations["snapshot_error"] = error
-            if ok and snap_path.is_file():
-                rel = _record(staging_dir, snap_path, 7, file_manifest)
-                conversations["snapshot"] = rel
-                level_counts[L7] += 1
-                counts = _message_counts(snap_path)
-                named = {agent["id"]: agent for agent in assets["agents"]}
-                platform_rows = 0
-                listed = []
-                for agent_id, count in sorted(counts.items()):
-                    if agent_id in named or valid_agent_id(agent_id):
-                        meta = named.get(agent_id, {"id": agent_id, "name": agent_id, "kind": "unknown"})
-                        listed.append({
-                            "id": meta["id"], "name": meta["name"], "kind": meta["kind"], "messages": count,
-                        })
-                    else:
-                        platform_rows += count
-                for agent in assets["agents"]:
-                    if agent["id"] not in counts:
-                        listed.append({
-                            "id": agent["id"], "name": agent["name"], "kind": agent["kind"], "messages": 0,
-                        })
-                conversations["agents"] = listed
-                conversations["platform_message_rows"] = platform_rows
-                stats_path = staging_dir / L7 / "conversation-stats.json"
-                stats_path.write_text(json.dumps({
-                    "read_only": True,
-                    "source": conversations["source"],
-                    "consistent_snapshot": consistent,
-                    "agents": listed,
-                    "platform_message_rows": platform_rows,
-                }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-                _record(staging_dir, stats_path, 7, file_manifest)
-                level_counts[L7] += 1
+        search_snap = snapshots.get("search-index-snapshot.db")
+        if search_snap:
+            snap_path = staging_dir / search_snap["rel"]
+            conversations["snapshot"] = search_snap["rel"]
+            conversations["consistent_snapshot"] = search_snap["consistent"]
+            if search_snap["error"]:
+                conversations["snapshot_error"] = search_snap["error"]
+            counts = _message_counts(snap_path)
+            named = {agent["id"]: agent for agent in assets["agents"]}
+            platform_rows = 0
+            listed = []
+            for agent_id, count in sorted(counts.items()):
+                if agent_id in named or valid_agent_id(agent_id):
+                    meta = named.get(agent_id, {"id": agent_id, "name": agent_id, "kind": "unknown"})
+                    listed.append({
+                        "id": meta["id"], "name": meta["name"], "kind": meta["kind"], "messages": count,
+                    })
+                else:
+                    platform_rows += count
+            for agent in assets["agents"]:
+                if agent["id"] not in counts:
+                    listed.append({
+                        "id": agent["id"], "name": agent["name"], "kind": agent["kind"], "messages": 0,
+                    })
+            conversations["agents"] = listed
+            conversations["platform_message_rows"] = platform_rows
+            stats_path = staging_dir / L7 / "conversation-stats.json"
+            stats_path.write_text(json.dumps({
+                "read_only": True,
+                "source": conversations["source"],
+                "consistent_snapshot": search_snap["consistent"],
+                "agents": listed,
+                "platform_message_rows": platform_rows,
+            }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            _record(staging_dir, stats_path, 7, file_manifest)
+            level_counts[L7] += 1
+        for arc, info in sorted(snapshots.items()):
+            if arc == "search-index-snapshot.db":
+                continue
+            agent_id = arc.split("/")[1] if arc.startswith("agent-stores/") and "/" in arc else ""
+            conversations["agent_stores"].append({
+                "agent_id": agent_id,
+                "snapshot": info["rel"],
+                "consistent_snapshot": info["consistent"],
+                "source": info["src"],
+            })
 
         excluded = [{"path": _display(p, paths), "reason": r} for p, r in assets["excluded"]]
-        flagged = [{"path": _display(p, paths), "reason": r} for p, r in assets["flagged"]]
+        flagged_count = len(assets["flagged"])
+        flagged = summarize_flags(assets["flagged"], paths)
         skipped = [{"path": _display(p, paths), "reason": r} for p, r in assets["skipped"]]
         has_level8 = level_counts[L8] > 0
         zip_filename = (
@@ -739,13 +840,14 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
             "cargo_levels": {level: {"count": level_counts[level]} for level in LEVEL_ORDER},
             "excluded": excluded,
             "redacted": redacted,
+            "flagged_count": flagged_count,
             "flagged": flagged,
             "skipped": skipped,
             "level5_omitted": level5,
             "memory_drop": assets["memory"],
             "conversations": conversations,
             "experimental": assets["experimental"],
-            "warnings": list(assets["warnings"]),
+            "warnings": pack_warnings,
             "restore_policy": {
                 "direct": [
                     "Level_4 paths under workspace/ restore into the target workspace",
@@ -756,6 +858,7 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
                 ],
                 "never_overwrite": [
                     "live search-index.db",
+                    "live store.db",
                     "live agent-transcripts",
                     "live profile.json / settings.json / automations",
                     "/cursor/stores",
@@ -791,7 +894,7 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
         "excluded": excluded,
         "redacted": redacted,
         "flagged": flagged,
-        "warnings": list(assets["warnings"]),
+        "warnings": pack_warnings,
         "memory": assets["memory"],
         "conversations": conversations,
         "experimental": assets["experimental"],
@@ -1214,7 +1317,7 @@ _CHECKLIST = {
         "auto": "- Workspace files ({workspace_n}) -> `{workspace}`\n- User skills ({workflow_n}) -> `{workflows}`{skills_note}",
         "skills_held": "\n- agent-data was missing, so skills were left in this folder instead of workflows/",
         "not_h": "## Not written on purpose",
-        "not_body": "- Do not replace `search-index.db` with `search-index-snapshot.db`.\n- Do not replace live `agent-transcripts/`.\n- Do not copy `.incoming` files onto `profile.json`, `settings.json`, or routines until you have read them.\n- Do not copy anything into `/cursor/stores`.",
+        "not_body": "- Do not replace `search-index.db` with `search-index-snapshot.db`.\n- Do not replace a bot's live `store.db` with `store-snapshot.db`.\n- Do not replace live `agent-transcripts/`.\n- Do not copy `.incoming` files onto `profile.json`, `settings.json`, or routines until you have read them.\n- Do not copy anything into `/cursor/stores`.",
         "uuid_h": "## Bot id remap",
         "no_uuid": "- No uuid map was provided. Source ids are unchanged inside text files.",
         "agents_h": "## Bots in this package",
@@ -1224,7 +1327,7 @@ _CHECKLIST = {
         "memory_h": "## Memory",
         "memory_body": "Level_6 is the memory-drop files from `{root}` and any local memory files packed with them. They stay on disk until the destination bot loads each `fact` through its own memory tool. A zero-byte .jsonl only means a file exists. `memory-status.json` in that same folder is the marker the pack report uses when a review had no memories to save.",
         "conv_h": "## Conversations (read-only)",
-        "conv_body": "The search-index snapshot and transcripts are reference copies in this folder. Message bodies stay in the snapshot database; they were not loaded back into the live index. Text transcripts may have ids and paths rewritten. The database file itself is not rewritten.",
+        "conv_body": "The search-index snapshot, each bot `store-snapshot.db`, and transcripts are reference copies in this folder. Message bodies stay in the snapshot database; they were not loaded back into the live index. `store.db-wal` and `store.db-shm` were not packed. Text transcripts may have ids and paths rewritten. The database files themselves are not rewritten.",
         "content_h": "## Notes, reference, attachments, private, projects",
         "content_body": "These are in `{kit}` under their level directories, with bot ids remapped in the folder names when a uuid map was given. Copy the pieces you still want into the matching bot directory yourself.",
         "secrets_h": "## Secrets left out of the package",
@@ -1242,7 +1345,7 @@ _CHECKLIST = {
         "auto": "- 工作區檔案（{workspace_n}）-> `{workspace}`\n- 使用者技能（{workflow_n}）-> `{workflows}`{skills_note}",
         "skills_held": "\n- 目標沒有 agent-data，技能留在此資料夾，沒有寫入 workflows/。",
         "not_h": "## 故意沒有寫入",
-        "not_body": "- 不要用 `search-index-snapshot.db` 覆蓋 live 的 `search-index.db`。\n- 不要覆蓋 live 的 `agent-transcripts/`。\n- 讀過內容之前，不要把 `.incoming` 蓋上 `profile.json`、`settings.json` 或例行工作。\n- 不要把任何檔案複製進 `/cursor/stores`。",
+        "not_body": "- 不要用 `search-index-snapshot.db` 覆蓋 live 的 `search-index.db`。\n- 不要用 `store-snapshot.db` 覆蓋 Bot 正在使用的 `store.db`。\n- 不要覆蓋 live 的 `agent-transcripts/`。\n- 讀過內容之前，不要把 `.incoming` 蓋上 `profile.json`、`settings.json` 或例行工作。\n- 不要把任何檔案複製進 `/cursor/stores`。",
         "uuid_h": "## Bot UUID 對照",
         "no_uuid": "- 沒有提供 uuid 對照，文字檔內的原始 id 保持不變。",
         "agents_h": "## 封裝內的 Bot",
@@ -1252,7 +1355,7 @@ _CHECKLIST = {
         "memory_h": "## 記憶",
         "memory_body": "Level_6 收的是 `{root}` 的 memory-drop，以及一併打包的本機 memory 檔。這些檔留在磁碟上，要由目標 Bot 用自己的記憶工具讀進每一條 `fact`。零位元組的 .jsonl 只表示檔案存在。同一層的 `memory-status.json` 才是封裝報告用來代表「已查看、沒有可存記憶」的記號。",
         "conv_h": "## 對話（唯讀）",
-        "conv_body": "搜尋索引快照與逐字稿只是此資料夾裡的參考副本。訊息正文留在快照資料庫，沒有寫回 live 索引。文字逐字稿裡的 id 與路徑可能已改寫；資料庫檔本身沒有改寫。",
+        "conv_body": "搜尋索引快照、各 Bot 的 `store-snapshot.db` 與逐字稿只是此資料夾裡的參考副本。訊息正文留在快照資料庫，沒有寫回 live 索引。`store.db-wal` 與 `store.db-shm` 沒有打包。文字逐字稿裡的 id 與路徑可能已改寫；資料庫檔本身沒有改寫。",
         "content_h": "## 筆記、參考資料、附件、private、專案",
         "content_body": "這些檔案在 `{kit}` 的對應層級目錄。若有 uuid 對照，資料夾名稱已換成目標 id。請自行挑需要的檔案複製到對應的 Bot 目錄。",
         "secrets_h": "## 未打包的機密",
@@ -1270,7 +1373,7 @@ _CHECKLIST = {
         "auto": "- ワークスペース（{workspace_n}）-> `{workspace}`\n- ユーザースキル（{workflow_n}）-> `{workflows}`{skills_note}",
         "skills_held": "\n- agent-data が無いため、スキルは workflows/ ではなくこのフォルダに残しています。",
         "not_h": "## 意図的に書き込んでいないもの",
-        "not_body": "- `search-index-snapshot.db` で稼働中の `search-index.db` を置き換えないでください。\n- 稼働中の `agent-transcripts/` を置き換えないでください。\n- 内容を確認する前に `.incoming` を `profile.json` や `settings.json`、ルーチンへ上書きしないでください。\n- `/cursor/stores` へは何もコピーしないでください。",
+        "not_body": "- `search-index-snapshot.db` で稼働中の `search-index.db` を置き換えないでください。\n- `store-snapshot.db` で稼働中の `store.db` を置き換えないでください。\n- 稼働中の `agent-transcripts/` を置き換えないでください。\n- 内容を確認する前に `.incoming` を `profile.json` や `settings.json`、ルーチンへ上書きしないでください。\n- `/cursor/stores` へは何もコピーしないでください。",
         "uuid_h": "## Bot UUID の対応",
         "no_uuid": "- UUID 対応表はありません。テキスト内の元の id はそのままです。",
         "agents_h": "## パッケージ内の Bot",
@@ -1280,7 +1383,7 @@ _CHECKLIST = {
         "memory_h": "## メモリ",
         "memory_body": "Level_6 には `{root}` の memory-drop と、一緒に梱包したローカルの memory ファイルが入ります。ファイルはディスク上に残り、移行先 Bot が自分のメモリ機能で各 `fact` を読み込みます。0 バイトの .jsonl はファイルがあることしか示しません。同じ場所の `memory-status.json` が、パック報告では「確認したが保存する記憶はなかった」の印です。",
         "conv_h": "## 会話（読み取り専用）",
-        "conv_body": "検索インデックスのスナップショットとトランスクリプトは、このフォルダの参照用コピーです。本文はスナップショット DB に残っており、稼働中のインデックスへは戻していません。テキスト側の id とパスは書き換えられることがあります。データベースファイル自体は書き換えていません。",
+        "conv_body": "検索インデックスのスナップショット、各 Bot の `store-snapshot.db`、トランスクリプトは、このフォルダの参照用コピーです。本文はスナップショット DB に残っており、稼働中のインデックスへは戻していません。`store.db-wal` と `store.db-shm` は梱包していません。テキスト側の id とパスは書き換えられることがあります。データベースファイル自体は書き換えていません。",
         "content_h": "## ノート、参考資料、添付、private、プロジェクト",
         "content_body": "`{kit}` の各レベルディレクトリにあります。UUID 対応表がある場合、フォルダ名は移行先の id です。必要なものだけ、対応する Bot ディレクトリへ自分でコピーしてください。",
         "secrets_h": "## パッケージに入れなかった機密",

@@ -1,19 +1,22 @@
 """Optional package encryption.
 
-The toolkit stays on the Python standard library. ``--encrypt`` shells out to
-OpenSSL when that binary is on PATH. It is not required for pack, restore, or
-inspect. The passphrase is read from the environment variable
-UAWT_ENCRYPT_PASSPHRASE or from a prompt. It is never accepted as a command-line
-argument.
+``--encrypt`` is off unless the flag is passed. The toolkit stays on the Python
+standard library and shells out to OpenSSL for the cipher. The passphrase is
+read from UAWT_ENCRYPT_PASSPHRASE or from a prompt. It is never accepted as a
+command-line argument.
 
-Manual equivalent (same flags the toolkit uses):
+The file written to ``*.zip.enc`` is an envelope, not raw OpenSSL output:
 
-    openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \\
-        -in PACKAGE.zip -out PACKAGE.zip.enc -pass env:UAWT_ENCRYPT_PASSPHRASE
-    openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -salt \\
-        -in PACKAGE.zip.enc -out PACKAGE.zip -pass env:UAWT_ENCRYPT_PASSPHRASE
+    magic ``UAWTENC1\\n`` | 16-byte MAC salt | 32-byte HMAC-SHA256 | ciphertext
+
+The ciphertext is OpenSSL ``enc -aes-256-cbc -pbkdf2 -iter 200000 -salt``.
+The HMAC key is PBKDF2-HMAC-SHA256 of the passphrase (200000 iterations, the
+salt above). The HMAC covers the ciphertext (encrypt-then-MAC). Decrypt checks
+that HMAC before it writes any output file.
 """
 
+import hashlib
+import hmac
 import os
 import shutil
 import subprocess
@@ -23,6 +26,11 @@ from pathlib import Path
 
 OPENSSL_CIPHER = ("-aes-256-cbc", "-pbkdf2", "-iter", "200000", "-salt")
 PASSPHRASE_ENV = "UAWT_ENCRYPT_PASSPHRASE"
+ENVELOPE_MAGIC = b"UAWTENC1\n"
+MAC_SALT_LEN = 16
+MAC_LEN = 32
+MAC_ITERATIONS = 200000
+_CHUNK = 1024 * 1024
 
 
 class EncryptionError(Exception):
@@ -49,11 +57,30 @@ def openssl_enc_command(src, dst, decrypt=False):
     return cmd
 
 
-def _run_openssl(src, dst, passphrase, decrypt=False):
+def _require_passphrase(passphrase):
     if not passphrase:
         raise EncryptionError(
             f"A passphrase is required. Set {PASSPHRASE_ENV} or enter one when prompted."
         )
+    return passphrase.encode("utf-8")
+
+
+def _mac_key(passphrase, salt):
+    return hashlib.pbkdf2_hmac("sha256", _require_passphrase(passphrase), salt, MAC_ITERATIONS, dklen=32)
+
+
+def _hmac_ciphertext(path, mac_key, skip=0):
+    digest = hmac.new(mac_key, digestmod=hashlib.sha256)
+    with open(path, "rb") as handle:
+        if skip:
+            handle.seek(skip)
+        while chunk := handle.read(_CHUNK):
+            digest.update(chunk)
+    return digest.digest()
+
+
+def _run_openssl(src, dst, passphrase, decrypt=False):
+    _require_passphrase(passphrase)
     cmd = openssl_enc_command(src, dst, decrypt=decrypt)
     env = os.environ.copy()
     env[PASSPHRASE_ENV] = passphrase
@@ -63,14 +90,72 @@ def _run_openssl(src, dst, passphrase, decrypt=False):
         raise EncryptionError(f"Could not run openssl: {exc}") from exc
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
-        if dst.exists():
-            dst.unlink()
+        if Path(dst).exists():
+            Path(dst).unlink()
         raise EncryptionError(detail or f"openssl exited {proc.returncode}")
     try:
         os.chmod(dst, 0o600)
     except OSError:
         pass
-    return dst
+    return Path(dst)
+
+
+def _seal(ciphertext_path, enc_path, passphrase):
+    salt = os.urandom(MAC_SALT_LEN)
+    mac = _hmac_ciphertext(ciphertext_path, _mac_key(passphrase, salt))
+    with open(enc_path, "wb") as out:
+        out.write(ENVELOPE_MAGIC)
+        out.write(salt)
+        out.write(mac)
+        with open(ciphertext_path, "rb") as src:
+            while chunk := src.read(_CHUNK):
+                out.write(chunk)
+    try:
+        os.chmod(enc_path, 0o600)
+    except OSError:
+        pass
+
+
+def _open_envelope(enc_path, passphrase):
+    """Return a temp file of ciphertext, or raise before writing decrypted output.
+
+    The HMAC is checked first. A wrong passphrase or a modified file raises
+    EncryptionError and leaves no ciphertext temp and no plaintext.
+    """
+    enc_path = Path(enc_path)
+    header = len(ENVELOPE_MAGIC) + MAC_SALT_LEN + MAC_LEN
+    try:
+        with open(enc_path, "rb") as handle:
+            magic = handle.read(len(ENVELOPE_MAGIC))
+            salt = handle.read(MAC_SALT_LEN)
+            mac = handle.read(MAC_LEN)
+    except OSError as exc:
+        raise EncryptionError(f"Could not read encrypted package: {exc}") from exc
+    if magic != ENVELOPE_MAGIC or len(salt) != MAC_SALT_LEN or len(mac) != MAC_LEN:
+        raise EncryptionError(
+            "This encrypted package has no integrity header. "
+            "Re-pack it with the current --encrypt. No output was written."
+        )
+    try:
+        actual = _hmac_ciphertext(enc_path, _mac_key(passphrase, salt), skip=header)
+    except EncryptionError:
+        raise
+    if not hmac.compare_digest(actual, mac):
+        raise EncryptionError(
+            "Wrong passphrase, or the encrypted file was modified. No output was written."
+        )
+    handle = tempfile.NamedTemporaryFile(prefix="uawt_ct_", suffix=".bin", delete=False)
+    handle.close()
+    temp = Path(handle.name)
+    try:
+        with open(enc_path, "rb") as src, open(temp, "wb") as out:
+            src.seek(header)
+            while chunk := src.read(_CHUNK):
+                out.write(chunk)
+    except OSError as exc:
+        temp.unlink(missing_ok=True)
+        raise EncryptionError(f"Could not read ciphertext: {exc}") from exc
+    return temp
 
 
 def encrypt_package(zip_path, passphrase):
@@ -82,26 +167,38 @@ def encrypt_package(zip_path, passphrase):
     enc_path = Path(str(zip_path) + ".enc")
     if enc_path.exists():
         enc_path.unlink()
+    cipher_temp = Path(str(enc_path) + ".part")
     try:
-        _run_openssl(zip_path, enc_path, passphrase, decrypt=False)
+        _run_openssl(zip_path, cipher_temp, passphrase, decrypt=False)
+        _seal(cipher_temp, enc_path, passphrase)
     except EncryptionError:
         if enc_path.exists():
             enc_path.unlink()
         raise
+    finally:
+        if cipher_temp.exists():
+            cipher_temp.unlink()
     zip_path.unlink()
     return enc_path
 
 
 def decrypt_package(enc_path, passphrase, dest=None):
-    """Decrypt to ``dest`` or a new temporary ``.zip``. Caller deletes temp files."""
+    """Decrypt to ``dest`` or a new temporary ``.zip``. Caller deletes temp files.
+
+    The integrity check runs before ``dest`` is created.
+    """
     enc_path = Path(enc_path)
+    ciphertext = _open_envelope(enc_path, passphrase)
     if dest is None:
         handle = tempfile.NamedTemporaryFile(prefix="uawt_dec_", suffix=".zip", delete=False)
         handle.close()
         dest = Path(handle.name)
     else:
         dest = Path(dest)
-    return _run_openssl(enc_path, dest, passphrase, decrypt=True)
+    try:
+        return _run_openssl(ciphertext, dest, passphrase, decrypt=True)
+    finally:
+        ciphertext.unlink(missing_ok=True)
 
 
 def _level_archives(input_path):
