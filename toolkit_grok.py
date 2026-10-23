@@ -3,10 +3,6 @@
 Additive to the Antigravity scanner, packer, and restore path. Nothing here runs
 unless the selected profile is ``grok`` (auto-detected when agent-data exists,
 or forced with ``--profile grok`` / ``UAWT_PROFILE=grok``).
-
-Layout notes (agent ids, memory-drop JSONL, user workflows versus managed and
-plugin skills, and a read-only SQLite backup of search-index.db) follow the
-public Grok Bot box shape. See THIRD_PARTY_NOTICES.md.
 """
 
 from __future__ import annotations
@@ -18,6 +14,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -59,9 +56,10 @@ GROK_SECRET_FILENAMES = {
     "teach-queue-key.json",
 }
 SKIP_DIR_NAMES = set(EXCLUDED_DIRS) | {"managed-skills", "plugin-skills", ".cache"}
-AGENT_ID_RE = re.compile(
-    r"^(?:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32})$"
-)
+# Folder and archive names from the grok-bot-export / virtual-office exporter.
+# Matched only so a leftover export inside the workspace is not packed again.
+FOREIGN_EXPORT_PREFIXES = ("grok-bot-export-", "virtual-office-")
+FOREIGN_EXPORT_ARCHIVE_SUFFIXES = (".zip.enc", ".tgz", ".tar.gz", ".zip", ".tar")
 USER_CONTENT_TOPS = {"notes", "reference", "attachments", "private"}
 
 
@@ -70,11 +68,22 @@ class GrokError(Exception):
 
 
 def valid_agent_id(value):
-    return isinstance(value, str) and bool(AGENT_ID_RE.fullmatch(value))
+    """True when ``value`` is a hyphenated UUID or 32 hex digits.
+
+    ``uuid.UUID`` also accepts braces and a ``urn:uuid:`` prefix. Agent
+    directory names use only the bare hex form or the hyphenated form.
+    """
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return value.lower() in {parsed.hex, str(parsed)}
 
 
 def grok_paths(env=None):
-    """Resolve Grok locations. Explicit GROK_* variables win, then the names used by grok-bot-backup."""
+    """Resolve Grok locations. GROK_* variables override AGENT_DATA, WORKSPACE, and MEMORY_DROP."""
     env = os.environ if env is None else env
     workspace = Path(env.get("GROK_WORKSPACE") or env.get("WORKSPACE") or "/workspace")
     agent_data = Path(env.get("GROK_AGENT_DATA") or env.get("AGENT_DATA") or "/home/box/agent-data")
@@ -165,7 +174,7 @@ def _skip_dir_reason(full, name, include_bulky, include_subagents, exclude_roots
         return "restore bookkeeping"
     if name == "migration_output":
         return "toolkit output directory"
-    if name.startswith(("grok-bot-export-", "virtual-office-")):
+    if name.startswith(FOREIGN_EXPORT_PREFIXES):
         return "previous backup artifact"
     if not include_subagents and name.startswith("sand-subagent-"):
         return "sand-subagent transcript (pass --include-subagents to pack)"
@@ -202,9 +211,7 @@ def _iter_files(root, include_bulky, include_subagents, exclude_roots, skipped):
             if full.is_symlink():
                 skipped.append((full, "symlink (not followed)"))
                 continue
-            if name.startswith(("grok-bot-export-", "virtual-office-")) and name.endswith(
-                (".tar", ".tar.gz", ".tgz", ".zip", ".zip.enc")
-            ):
+            if name.startswith(FOREIGN_EXPORT_PREFIXES) and name.endswith(FOREIGN_EXPORT_ARCHIVE_SUFFIXES):
                 skipped.append((full, "previous backup artifact"))
                 continue
             yield full
@@ -344,12 +351,12 @@ def _summarize_memory(memory_root, agent_ids):
         "shared_user": None,
         "agents": [],
         "note": (
-            "Memory-drop JSONL is exported by each bot. "
-            "Copying the file does not recreate platform memory; import it on the target bot."
+            "Each bot writes its own memory-drop JSONL. "
+            "The pack report counts fact lines; the destination bot has to load those lines itself."
         ),
     }
     if not memory_root.is_dir():
-        report["note"] = "memory-drop directory is absent; Level_6 will not contain a RecallMemory export"
+        report["note"] = "memory-drop directory is absent; Level_6 will not contain an exported memory file"
         return report
     shared = memory_root / "shared-user"
     shared_files = sorted(p for p in shared.glob("*") if p.is_file()) if shared.is_dir() else []
@@ -1215,7 +1222,7 @@ _CHECKLIST = {
         "profile_h": "## Profile, settings, routines",
         "profile_body": "{sidecars} sidecar file(s) ending in `.incoming` were written only where that bot directory (or its automations directory) already existed. The full copy is under `{kit}`. Review it, then rename a sidecar onto the live filename yourself if you want the bot to adopt it.",
         "memory_h": "## Memory",
-        "memory_body": "Level_6 holds the memory-drop JSONL from `{root}` plus any local memory files. Placing those files on disk does not recreate RecallMemory. On the target bot, import each `fact` with the bot's own memory tool. An empty JSONL file is not proof the export ran; `memory-status.json` is only meaningful when that bot actually checked and found nothing.",
+        "memory_body": "Level_6 is the memory-drop files from `{root}` and any local memory files packed with them. They stay on disk until the destination bot loads each `fact` through its own memory tool. A zero-byte .jsonl only means a file exists. `memory-status.json` in that same folder is the marker the pack report uses when a review had no memories to save.",
         "conv_h": "## Conversations (read-only)",
         "conv_body": "The search-index snapshot and transcripts are reference copies in this folder. Message bodies stay in the snapshot database; they were not loaded back into the live index. Text transcripts may have ids and paths rewritten. The database file itself is not rewritten.",
         "content_h": "## Notes, reference, attachments, private, projects",
@@ -1243,7 +1250,7 @@ _CHECKLIST = {
         "profile_h": "## 身份、設定、例行工作",
         "profile_body": "只有在該 Bot 目錄（或其中的 automations 目錄）已經存在時，才寫入 {sidecars} 個 `.incoming` 附檔。完整副本在 `{kit}`。請先閱讀，再自行把附檔改名成正式檔名。",
         "memory_h": "## 記憶",
-        "memory_body": "Level_6 是 `{root}` 的 memory-drop JSONL，以及本機 memory 檔。把檔案放到磁碟上不會重建 RecallMemory。請在目標 Bot 上用它自己的記憶工具匯入每條 `fact`。空的 JSONL 不能證明匯出做過；只有該 Bot 確實查過且沒有記憶時，`memory-status.json` 才有意義。",
+        "memory_body": "Level_6 收的是 `{root}` 的 memory-drop，以及一併打包的本機 memory 檔。這些檔留在磁碟上，要由目標 Bot 用自己的記憶工具讀進每一條 `fact`。零位元組的 .jsonl 只表示檔案存在。同一層的 `memory-status.json` 才是封裝報告用來代表「已查看、沒有可存記憶」的記號。",
         "conv_h": "## 對話（唯讀）",
         "conv_body": "搜尋索引快照與逐字稿只是此資料夾裡的參考副本。訊息正文留在快照資料庫，沒有寫回 live 索引。文字逐字稿裡的 id 與路徑可能已改寫；資料庫檔本身沒有改寫。",
         "content_h": "## 筆記、參考資料、附件、private、專案",
@@ -1271,7 +1278,7 @@ _CHECKLIST = {
         "profile_h": "## プロフィール、設定、ルーチン",
         "profile_body": "対象 Bot のディレクトリ（ルーチンは automations ディレクトリ）が既にある場合だけ、`.incoming` を {sidecars} 件書きました。完全なコピーは `{kit}` にあります。読んだうえで、採用するファイルだけ自分で正式な名前に変えてください。",
         "memory_h": "## メモリ",
-        "memory_body": "Level_6 は `{root}` の memory-drop JSONL と、ローカルの memory ファイルです。ファイルを置いただけでは RecallMemory は再作成されません。各 `fact` は移行先 Bot 自身のメモリ機能で取り込んでください。空の JSONL はエクスポート済みの証明ではありません。`memory-status.json` は、その Bot が実際に確認して記憶が無かったときだけ意味を持ちます。",
+        "memory_body": "Level_6 には `{root}` の memory-drop と、一緒に梱包したローカルの memory ファイルが入ります。ファイルはディスク上に残り、移行先 Bot が自分のメモリ機能で各 `fact` を読み込みます。0 バイトの .jsonl はファイルがあることしか示しません。同じ場所の `memory-status.json` が、パック報告では「確認したが保存する記憶はなかった」の印です。",
         "conv_h": "## 会話（読み取り専用）",
         "conv_body": "検索インデックスのスナップショットとトランスクリプトは、このフォルダの参照用コピーです。本文はスナップショット DB に残っており、稼働中のインデックスへは戻していません。テキスト側の id とパスは書き換えられることがあります。データベースファイル自体は書き換えていません。",
         "content_h": "## ノート、参考資料、添付、private、プロジェクト",

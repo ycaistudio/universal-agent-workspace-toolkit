@@ -34,6 +34,7 @@ from toolkit_grok import (  # noqa: E402
     parse_uuid_map,
     run_grok_pack,
     scan_grok_assets,
+    valid_agent_id,
 )
 from toolkit_restore import cleanup_staging, unpack_and_audit  # noqa: E402
 from toolkit_scanner import REDACTED  # noqa: E402
@@ -84,6 +85,23 @@ class DetectTests(unittest.TestCase):
             self.assertEqual(detect_profile("antigravity", env), "antigravity")
 
 
+class AgentIdTests(unittest.TestCase):
+    def test_accepts_hyphenated_uuid_and_32_hex(self):
+        self.assertTrue(valid_agent_id("11111111-1111-4111-8111-111111111111"))
+        self.assertTrue(valid_agent_id("11111111111141118111111111111111"))
+        self.assertTrue(valid_agent_id("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"))
+
+    def test_rejects_folder_names_and_decorated_uuid_text(self):
+        self.assertFalse(valid_agent_id("lobby"))
+        self.assertFalse(valid_agent_id("desk"))
+        self.assertFalse(valid_agent_id(""))
+        self.assertFalse(valid_agent_id(None))
+        self.assertFalse(valid_agent_id("{11111111-1111-4111-8111-111111111111}"))
+        self.assertFalse(valid_agent_id("urn:uuid:11111111-1111-4111-8111-111111111111"))
+        self.assertFalse(valid_agent_id("11111111-1111-4111-8111-11111111111"))
+        self.assertFalse(valid_agent_id("11111111-11111111-1111-111111111111"))
+
+
 class GrokBoxTests(unittest.TestCase):
     def setUp(self):
         import tempfile
@@ -111,10 +129,10 @@ class GrokBoxTests(unittest.TestCase):
         (agent / "avatar.png").write_bytes(b"\x89PNG-fake")
         (agent / "automations" / "daily.json").write_text(
             json.dumps({"name": "daily", "agent": SRC}), encoding="utf-8")
-        (agent / "notes" / "memo.md").write_text("original note", encoding="utf-8")
+        (agent / "notes" / "memo.md").write_text("FIELD_MEMO_SENTINEL_grok", encoding="utf-8")
         (agent / "notes" / "custom-secrets.json").write_text(NESTED_OK, encoding="utf-8")
         (agent / "notes" / "gateway.json").write_text(GATEWAY, encoding="utf-8")
-        (agent / "private" / "note.txt").write_text("private original content", encoding="utf-8")
+        (agent / "private" / "note.txt").write_text("PRIVATE_NOTE_SENTINEL_grok", encoding="utf-8")
 
         for name, text in {
             "box-secrets.json": BOX_SECRET,
@@ -141,9 +159,11 @@ class GrokBoxTests(unittest.TestCase):
         nested.mkdir(parents=True)
         (nested / "SKILL.md").write_text(PLUGIN, encoding="utf-8")
 
-        (self.src_data / "agents" / "organization").mkdir(parents=True)
-        (self.src_data / "agents" / "organization" / "profile.json").write_text("{}", encoding="utf-8")
-        (self.src_data / "agents" / "active-agent.json").write_text('{"active":true}', encoding="utf-8")
+        (self.src_data / "agents" / "lobby").mkdir(parents=True)
+        (self.src_data / "agents" / "lobby" / "profile.json").write_text(
+            '{"label":"not-a-bot"}', encoding="utf-8")
+        (self.src_data / "agents" / "catalog.json").write_text(
+            '{"listed": false}', encoding="utf-8")
 
         self.src_ws.mkdir(parents=True)
         (self.src_ws / "hello.md").write_text(
@@ -154,13 +174,11 @@ class GrokBoxTests(unittest.TestCase):
         drop_agent = self.drop / "agents" / SRC
         drop_agent.mkdir(parents=True)
         (drop_agent / "memory-profile.jsonl").write_text(
-            json.dumps({"date": "2026-10-22", "tier": "profile", "scope": "agent",
-                        "source": "RecallMemory", "fact": FACT}) + "\n",
+            json.dumps({"fact": FACT, "written": "2026-03-04", "kind": "durable"}) + "\n",
             encoding="utf-8")
         (self.drop / "shared-user").mkdir()
         (self.drop / "shared-user" / "memory-user.jsonl").write_text(
-            json.dumps({"date": "2026-10-22", "tier": "profile", "scope": "user",
-                        "source": "RecallMemory", "fact": "shared fact"}) + "\n",
+            json.dumps({"fact": "ACCOUNT_MEMORY_SENTINEL_grok", "written": "2026-03-04", "kind": "account"}) + "\n",
             encoding="utf-8")
 
         transcript = self.src_data / "agent-transcripts" / SRC
@@ -172,18 +190,15 @@ class GrokBoxTests(unittest.TestCase):
         (sand / "log.jsonl").write_text(SUBAGENT, encoding="utf-8")
 
         conn = sqlite3.connect(self.src_data / "search-index.db")
-        conn.execute("create table agents (agent_id text)")
+        # The packer groups on messages.agent_id, which is the platform column.
+        # note_text is only here so the test can see that the snapshot kept the row payload.
+        conn.execute("create table messages (agent_id text, note_text text)")
         conn.execute(
-            "create table messages (id integer primary key, agent_id text, seq integer, entry_id text, "
-            "role text, timestamp_ms integer, body text)")
-        conn.execute("insert into agents (agent_id) values (?)", (SRC,))
-        conn.execute("insert into agents (agent_id) values ('organization')")
+            "insert into messages (agent_id, note_text) values (?, ?)",
+            (SRC, BODY))
         conn.execute(
-            "insert into messages (agent_id, seq, entry_id, role, timestamp_ms, body) values (?,?,?,?,?,?)",
-            (SRC, 1, "m1", "user", 1792600000000, BODY))
-        conn.execute(
-            "insert into messages (agent_id, seq, entry_id, role, timestamp_ms, body) values (?,?,?,?,?,?)",
-            ("organization", 1, "p1", "assistant", 1792600000000, "platform row"))
+            "insert into messages (agent_id, note_text) values (?, ?)",
+            ("lobby", "PLATFORM_ROW_SENTINEL_grok"))
         conn.commit()
         conn.close()
 
@@ -219,7 +234,7 @@ class GrokBoxTests(unittest.TestCase):
         self.assertEqual(manifest["conversations"]["platform_message_rows"], 1)
         ids = [agent["id"] for agent in manifest["conversations"]["agents"]]
         self.assertIn(SRC, ids)
-        self.assertNotIn("organization", ids)
+        self.assertNotIn("lobby", ids)
         self.assertEqual(next(agent["messages"] for agent in manifest["conversations"]["agents"] if agent["id"] == SRC), 1)
         with zipfile.ZipFile(result["zip_path"]) as archive:
             stats = archive.read("Level_7_Conversations/conversation-stats.json").decode()
@@ -227,8 +242,8 @@ class GrokBoxTests(unittest.TestCase):
             snapshot = self.root / "snap.db"
             snapshot.write_bytes(archive.read("Level_7_Conversations/search-index-snapshot.db"))
         with sqlite3.connect(snapshot) as conn:
-            self.assertEqual(conn.execute("select body from messages where agent_id=?", (SRC,)).fetchone()[0], BODY)
-            self.assertEqual(conn.execute("select count(*) from messages").fetchone()[0], 2)
+            rows = conn.execute("select agent_id, note_text from messages").fetchall()
+            self.assertCountEqual(rows, [(SRC, BODY), ("lobby", "PLATFORM_ROW_SENTINEL_grok")])
         names = [item["arc"] for item in assets["files"] if item["level"] == L5]
         self.assertTrue(any(name.endswith("clip.mp4") for name in names))
         self.assertTrue(any(item["level"] == L6 and item["arc"].endswith("memory-profile.jsonl") for item in assets["files"]))
