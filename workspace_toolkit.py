@@ -22,7 +22,9 @@ from toolkit_grok import (
     grok_paths,
     parse_uuid_map,
     run_grok_pack,
+    level_audit_count,
     scan_grok_assets,
+    summarize_flags,
     summarize_plan,
 )
 from toolkit_scanner import scan_all_assets
@@ -137,7 +139,7 @@ def print_grok_audit(t, assets):
     )
     for lvl, label, key, strategy in rows:
         size = f"{assets['sizes_mb'][key]:.2f} MB"
-        print(f"  | {lvl} | {label:<29} | {sum(1 for item in assets['files'] if item['level'] == key):<7} | {size:<9} | {strategy:<15} |")
+        print(f"  | {lvl} | {label:<29} | {level_audit_count(assets, key):<7} | {size:<9} | {strategy:<15} |")
     print("  " + "-" * 66)
     print(f"  • {t('core_size').format(size=assets['t_core_mb'])}")
     packed = sum(assets["sizes_mb"][key] for key in (L1, L2, L3, L4, L6, L7, L8))
@@ -151,6 +153,8 @@ def print_grok_audit(t, assets):
         facts = sum(item.get("facts", 0) for item in (agent.get("files") or {}).values())
         state = "exported" if agent.get("files") or agent.get("explicit_empty") else "not exported"
         print(f"    - {agent.get('id')}: {state}, facts {facts}")
+    for agent in assets.get("agents") or []:
+        print(f"  • {agent.get('name')} ({agent.get('id')}): routines {agent.get('routines', 0)}")
     stores = (assets.get("experimental") or {}).get("cursor_stores") or {}
     names = ", ".join(entry.get("name", "") for entry in stores.get("entries") or []) or "(none)"
     print(f"  • {t('grok_experimental').format(summary=names)}")
@@ -193,7 +197,9 @@ def pack_grok(args, t, user_home, include_secrets):
         print(f"  ⚠️ {t('lvl0_policy')}")
         print(f"  💡 {t('lvl0_action')}")
     if assets["flagged"]:
-        print_items(t("flagged_hdr").format(count=len(assets["flagged"])), assets["flagged"])
+        print(f"  • {t('flagged_hdr').format(count=len(assets['flagged']))}")
+        for row in summarize_flags(assets["flagged"], assets["paths"]):
+            print(f"    - {row['folder']}: {row['count']} ({row['reason']})")
     print_grok_audit(t, assets)
     if not args.yes and not yes_no(f"\n  {t('confirm_pack')}", default_yes=True):
         print("  Packaging cancelled by user.")
