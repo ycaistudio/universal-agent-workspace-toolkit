@@ -17,6 +17,9 @@ packages/
 _staging_*/
 _restore_staging/
 _pre_restore_snapshot_*/
+.grok-restore-incoming/
+.grok-pre-restore-snapshot_*/
+*.zip.enc
 
 # OS-specific files
 .DS_Store
