@@ -3,7 +3,6 @@
 *通用 AI 智能體工作區全域管理、遷移與快照還原工具 (開源標準版)*  
 *汎用 AI エージェント ワークスペース全域管理・移行・スナップショット復元ツール (オープンソース標準版)*
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/ycaistudio/universal-agent-workspace-toolkit)
 [![i18n](https://img.shields.io/badge/i18n-English%20%7C%20%E7%B9%81%E9%AB%94%E4%B8%AD%E6%96%87%20%7C%20%E6%97%A5%E6%9C%AC%E8%AA%9E-green.svg)](https://github.com/ycaistudio/universal-agent-workspace-toolkit)
@@ -380,7 +379,6 @@ universal-agent-workspace-toolkit/
 ├── toolkit_grok.py               # Grok Bot profile: scan, pack, conservative restore
 ├── toolkit_crypto.py             # Optional OpenSSL AES-256-CBC encryption (--encrypt)
 ├── tests/                        # Synthetic Grok box + Antigravity regression
-├── LICENSE                       # MIT License (copyright ycaistudio, 2026)
 ├── THIRD_PARTY_NOTICES.md        # MIT notice for studied grok-bot-backup layout
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
@@ -390,14 +388,6 @@ universal-agent-workspace-toolkit/
 ├── README_ja.md                  # Japanese Manual (日本語完全マニュアル)
 └── .gitignore                    # Security Exclusions & Cache Filters (資安排他過濾規則 / 除外ルール)
 ```
-
----
-
-## 📄 License / 授權條款 / ライセンス
-
-* **🇬🇧 English**: This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-* **🇹🇼 繁體中文**：本專案採用 MIT 開源授權條款 — 詳情請參閱 [LICENSE](LICENSE) 檔案。
-* **🇯🇵 日本語**：本プロジェクトは MIT ライセンスの下で公開されています — 詳細は [LICENSE](LICENSE) ファイルをご参照ください。
 
 ---
 
