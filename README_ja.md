@@ -1,5 +1,6 @@
 # Universal AI Agent Workspace Toolkit (日本語完全マニュアル)
-**汎用 AI エージェント ワークスペース全域管理・移行・スナップショット復元ツール**
+**汎用 AI エージェント ワークスペース全域管理・移行・スナップショット復元ツール**  
+Google Antigravity、Claude Code、Cursor、VS Code（Cline / Roo）、**Grok Bot** に対応します。
 
 <p align="center">
   <a href="README.md"><b>English (Master)</b></a> •
@@ -11,7 +12,7 @@
 
 ## 🇯🇵 日本語の概要
 
-**Universal AI Agent ワークスペース管理ハブ**は、最新の AI 開発・エンジニアリングチーム向けに設計された、クロスプラットフォーム対応の環境管理・移行・スナップショット復元ツールです。Google Antigravity、Cursor、Claude Code、VS Code (Cline / Roo) に対応予定です（動作確認済みは Google Antigravity のみ）。
+**Universal AI Agent ワークスペース管理ハブ**は、**Google Antigravity**、**Claude Code**、**Cursor**、**VS Code (Cline / Roo)**、**Grok Bot** 向けのスナップショットと復元ツールです。Grok Bot は別プロファイルです。詳細は下の節にあります。
 
 ### 6つの基本原則 (Core Invariants)
 1. **単一コンソール統合 (`workspace_toolkit.py`)**：従来の散在した A/B スクリプトや OS 依存の `.bat`/`.sh` を廃止し、単一の純粋な Python スクリプトで全環境を横断サポート。
@@ -63,31 +64,61 @@
 | **Level_5<br>Heavy Media<br>龐大素材資料<br>大容量メディア** | `Level_5_Heavy_References/` | Large PDFs, Videos, Datasets (>10MB - GBs) | **⚪ Not packed / 目前不打包 / 現在は梱包しません**<br>🇬🇧 Counted in the audit but not packed. There is no splitting yet.<br>🇹🇼 只在審計表計數，目前不打包，也尚無分卷功能。<br>🇯🇵 監査表に件数のみ表示し、梱包しません。分割機能は未実装です。 |
 | **Level_6<br>Memory drop<br>記憶匯出<br>メモリ書き出し** | `Level_6_Memory_Drop/` | Grok memory-drop JSONL (`shared-user/`, `agents/<uuid>/`) | **🟣 Incoming only / 只進 incoming / incoming のみ**<br>🇬🇧 Packed. Restore does not write platform memory. Each bot imports its own `fact` lines.<br>🇹🇼 會打包。還原不寫入平台記憶，需由各 Bot 自行匯入 `fact`。<br>🇯🇵 梱包します。復元はプラットフォームのメモリを書きません。各 Bot が自分の `fact` を取り込みます。 |
 | **Level_7<br>Conversations<br>對話快照<br>会話スナップショット** | `Level_7_Conversations/` | Read-only `search-index.db` snapshot + `agent-transcripts/` | **🔒 Not restored over live data / 不覆蓋 live 資料 / 稼働中データは上書きしない**<br>🇬🇧 SQLite `backup()` snapshot plus transcripts. Never replace the live index or transcripts.<br>🇹🇼 以 SQLite `backup()` 做快照並附上逐字稿。絕不取代 live 索引或逐字稿。<br>🇯🇵 SQLite `backup()` のスナップショットとトランスクリプト。稼働中の索引や逐字稿は置き換えません。 |
+| **Level_8<br>Cursor stores<br>實驗性清單<br>実験的一覧** | `Level_8_Cursor_Stores_Experimental/` | `/cursor/stores` when `--include-cursor-stores` is set | **Opt-in / 選擇性 / 任意**<br>🇬🇧 Contents are packed only with that flag. Restore does not write `/cursor/stores`.<br>🇹🇼 只有加上該旗標才打包內容。還原不寫回 `/cursor/stores`。<br>🇯🇵 そのフラグがあるときだけ中身を梱包します。復元は `/cursor/stores` を書きません。 |
 
 
 ---
 
 ## Grok Bot プロファイル
 
-`--profile auto`（既定）は agent-data ディレクトリがあるとき Grok Bot を選び、無いときは Antigravity のままです。そのディレクトリが無いマシンでは Antigravity の動作は変わりません。
+`--profile auto` が既定です。agent-data ディレクトリがあるとき（`GROK_AGENT_DATA`、無ければ `AGENT_DATA`、それも無ければ `/home/box/agent-data`）に **Grok Bot** を選びます。そのディレクトリが無いときは、`/workspace` が別の理由で存在していても **Antigravity** のままです。`--profile grok` と `--profile antigravity` は `UAWT_PROFILE` より優先します。`--profile` を省略したとき、`UAWT_PROFILE` は `auto`、`grok`、`antigravity` のいずれかです。`--profile auto` を明示した実行は `UAWT_PROFILE` を読みません。
 
-| 変数 | 互換名 | 既定 |
+| レベル | 梱包するもの |
+| :--- | :--- |
+| 1 | `profile.json`、`avatar.*`、`group.json`。ワークスペース内の `AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` |
+| 2 | `settings.json`、`automations/`、その Bot ディレクトリ内のその他のファイル、`agents/` 直下のファイル、名前が agent id ではない `agents/` 配下のフォルダ |
+| 3 | `agent-data/workflows/` のみ |
+| 4 | それ以外のワークスペースファイル。各 Bot の `notes/`、`reference/`、`attachments/`、`private/`。`agent-data/projects/` |
+| 5 | 件数のみで梱包しない: 10 MiB を超えるファイル、または拡張子 `.mp4` `.mov` `.avi` `.iso` `.dmg` `.tar` `.gz`。Level 1、3、6、7、8 はここへ移さない |
+| 6 | memory-drop ディレクトリに既にあるファイル（JSONL と、`memory-status.json` のような同じ場所の他のファイル）、加えて `agent-data/user-memory/` と各 Bot の `memory/` |
+| 7 | `agent-data/search-index.db` の SQLite `backup()` を `search-index-snapshot.db` として保存し、`agent-transcripts/` も同梱 |
+| 8 | `--include-cursor-stores` を付けたときだけ `/cursor/stores` |
+
+既定では入れず、指定したときだけ入れるもの:
+
+* 機密。`--include-secrets` が無い限り `box-secrets.json`、`host-secrets.json`、`chrome-cookie-seed.json`、`gateway.json`、`teach-queue-key.json`、agent-data 直下の `*-secrets.json`、および Level_0 のファイル名とトークン規則で除外します。梱包される JSON に残った機密らしい値は `__REDACTED_RESTORE_MANUALLY__` に置き換わります。
+* `managed-skills/` と `plugin-skills/` は梱包しません。対応するフラグはありません。
+* 名前が `sand-subagent-*` のディレクトリ。`--include-subagents` または `INCLUDE_SUBAGENTS=1` のときだけ含めます。
+* `/cursor/stores` のファイル中身。`--include-cursor-stores` が無いときは、マニフェストに名前だけを記録します。
+* シンボリックリンク。辿りません。
+
+`--encrypt` は OpenSSL の `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt` を実行します。パスフレーズは `UAWT_ENCRYPT_PASSPHRASE` かプロンプトで、引数では受け取りません。`PATH` 上に OpenSSL が必要です。成功すると平文 zip を消し、`*.zip.enc`（モード `600`）を残します。失敗すると平文 zip を残してエラーで終了します。
+
+復元は確認を 2 回求めます。`--target-env` を省略したときは、移行先が新規か既存かも尋ねます。`-y` はこれらの質問を飛ばし、省略された `--target-env` を `existing` として扱います。書き込む前に、上書きされる既存ファイルをワークスペースの `.grok-pre-restore-snapshot_*` へコピーし、`ROLLBACK.txt` を置きます。Level 4 のワークスペースファイルはその場所へ書きます。agent-data ディレクトリがあるときは `workflows/` を書き、無いときはそのスキルをキットに残します。`--target-env fresh` では、`AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` という名前のワークスペースファイルをその場所へ書きます。`existing` では `<name>.incoming` として保存します。`profile.json`、`settings.json`、`group.json`、`avatar.*` は、その Bot ディレクトリが既にあるときだけ `.incoming` になります。`automations/` 配下のファイルは、その `automations/` ディレクトリがあるときだけサイドカーになります。`shared-user/` 直下の memory-drop ファイルは、`user-memory/` があるとき `<name>.incoming` として保存します。`agents/<uuid>/<name>` にある memory-drop ファイル（そのファイル自体。より深いフォルダ内のファイルは対象外）は、その Bot ディレクトリがあるとき `<name>.incoming` として保存します。`agent-data/user-memory/` のコピーと、各 Bot の `memory/` はキットに残します。梱包ツリーと `MANUAL_REBUILD.md` は必ず `.grok-restore-incoming/<tracking-id>/` に置きます。稼働中の `profile.json`、設定、ルーチン、`search-index.db`、トランスクリプト、`/cursor/stores` はそのまま残します。無い Bot ディレクトリは作りません。`--uuid-map OLD=NEW`（繰り返し可）または `--uuid-map-file`（旧 id から新 id への JSON オブジェクト）は、テキスト中の Bot id を書き換えます。それらのテキストに記録されたワークスペースと agent-data のパスは、移行先のパスに書き換えます。両方の id はハイフン付き UUID か 32 桁の十六進です。同じ id を二度書いた組は無視します。スナップショットのデータベースファイルのバイト列はそのままです。`package_manifest.json` に `"profile": "grok"` があるとき、Grok の復元を実行します。
+
+| 変数 | 併読 | 既定 |
 | :--- | :--- | :--- |
 | `GROK_AGENT_DATA` | `AGENT_DATA` | `/home/box/agent-data` |
-| `GROK_WORKSPACE` | `WORKSPACE` | `/workspace` |
+| `GROK_WORKSPACE` | `WORKSPACE` | `/workspace`。`--workspace-dir` はこの実行のワークスペースだけを替え、memory-drop のパスは変えません |
 | `GROK_MEMORY_DROP` | `MEMORY_DROP` | `$GROK_WORKSPACE/exports/memory-drop` |
 | `GROK_CURSOR_STORES` | | `/cursor/stores` |
+| `UAWT_PROFILE` | | `--profile` を省略したときだけ使う |
+| `UAWT_ENCRYPT_PASSPHRASE` | | `--encrypt` で空ならプロンプト |
+| `INCLUDE_SUBAGENTS` | | `0`。`1` は `--include-subagents` と同じ |
+| `INCLUDE_BULKY_DIRS` | | `0` は名前が `.venv` で始まるディレクトリを省く。`1` は梱包する。それ以外は終了する |
 
-ユーザースキルは `workflows/` だけです。`managed-skills/` と `plugin-skills/` は梱包しません。Level_6 は各 Bot が自分で書き出す memory-drop JSONL、Level_7 は `search-index.db` の読み取り専用 SQLite スナップショットと `agent-transcripts/` です。`/cursor/stores` は実験的な一覧で、既定では梱包せず、復元でも書き戻しません。live の Pages ホストでは未検証です。
-
-`box-secrets.json`、`host-secrets.json`、`chrome-cookie-seed.json`、`gateway.json`、`teach-queue-key.json`、agent-data 直下の `*-secrets.json` は既定で除外します。`--encrypt` は OpenSSL の AES-256-CBC（`-pbkdf2 -iter 200000 -salt`）です。パスフレーズは `UAWT_ENCRYPT_PASSPHRASE` かプロンプトで、引数では受け取りません。
-
-復元は従来どおり 2 段階承認とロールバックです。直接書くのはワークスペースとユーザースキルだけです。プロフィール、設定、ルーチン、メモリは `.incoming` と `.grok-restore-incoming/<id>/MANUAL_REBUILD.md` に置きます。稼働中の `profile.json`、`search-index.db`、トランスクリプトは置き換えず、無い Bot ディレクトリも作りません。`--uuid-map OLD=NEW` はテキスト内の id と絶対パスを書き換えます。梱包の前に、各 Bot 自身がメモリを書き出してください（`AI_GUIDED_WIZARD_PROMPTS.md`）。テストは合成ツリー（`tests/test_grok_profile.py`）のみで、live の Grok Bot では未実行です。
+パッキングは Bot に記憶を問い合わせません。各 Bot が memory-drop を先に書いておく必要があります。`AI_GUIDED_WIZARD_PROMPTS.md` を参照してください。
 
 ```bash
-python workspace_toolkit.py --mode pack --profile grok -y
-python workspace_toolkit.py --mode restore --uuid-map OLD=NEW --target-env existing -y
+python workspace_toolkit.py --mode pack --profile grok
+UAWT_ENCRYPT_PASSPHRASE='choose-one' python workspace_toolkit.py --mode pack --profile grok --encrypt
+python workspace_toolkit.py --mode restore --target-env existing \
+  --uuid-map 11111111-1111-4111-8111-111111111111=22222222-2222-4222-8222-222222222222
 ```
+
+`--output-dir` が無いとき、パックは `./migration_output` に書きます。`--input-dir` が無いとき、復元は `./migration_output` を読みます。そのパスが無いときは、復元はカレントディレクトリを使います。
+
+**制限。** `tests/test_grok_profile.py` は合成ディレクトリです。このプロファイルは live の Grok Bot ホストでは未実行です。`/cursor/stores` は実験的で、live の Pages 配置とは照合していません。復元は Pages も `/cursor/stores` も書きません。上の AES-256-CBC には完全性タグがありません。復号に成功したあと、展開した各ファイルをマニフェストの SHA-256 と照合します。この照合は暗号文を認証しません。
 
 ---
 
@@ -152,6 +183,11 @@ python workspace_toolkit.py --mode inspect
 
 # 言語を手動指定
 python workspace_toolkit.py --lang ja
+
+# Grok Bot: パックと復元（-y で確認を省略）
+python workspace_toolkit.py --mode pack --profile grok
+python workspace_toolkit.py --mode restore --target-env existing \
+  --uuid-map 11111111-1111-4111-8111-111111111111=22222222-2222-4222-8222-222222222222
 ```
 
 
