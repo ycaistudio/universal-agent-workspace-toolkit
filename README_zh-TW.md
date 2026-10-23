@@ -46,11 +46,12 @@
 | **Claude (Code / Desktop)** | `CLAUDE.md` | `claude_desktop_config.json` | Custom Commands / 支援命令 / コマンド対応 | ✅ Auto-Adapted / 自動適配 / 自動適合 |
 | **VS Code (Cline / Roo)** | `.clinerules` | `cline_mcp_settings.json` | Incremental / 增量導入 / 増分導入 | ✅ Auto-Injected / 自動注入 / 自動注入 |
 | **Windsurf** | `.windsurfrules` | Standard JSON / 通用規範 / 標準JSON | Incremental / 增量導入 / 増分導入 | ✅ Auto-Injected / 自動注入 / 自動注入 |
+| **Grok Bot** | `agents/<uuid>/profile.json` → `.incoming` / 另存 `.incoming` / `.incoming` で保存 | No MCP. Settings and routines are `.incoming` only / 不覆蓋 live 設定 / 稼働中設定は上書きしない | `agent-data/workflows/` (user skills). `managed-skills/` and `plugin-skills/` are not packed | Not injected. Level_6 memory-drop + Level_7 read-only conversations / 不注入 / 注入しない |
 
 
 ---
 
-## 🛡️ Asset Defense Hierarchy / 六級資產防禦階梯 / 6段階の資産防護階層
+## 🛡️ Asset Defense Hierarchy / 資產防禦階梯 / 資産防護階層
 
 | Level / 級別 / 階層 | Directory / 目錄名稱 / ディレクトリ | Contained Assets / 包含內容 / 構成要素 | Defense Strategy / 防禦策略 / 防護戦略 |
 | :--- | :--- | :--- | :--- |
@@ -60,7 +61,33 @@
 | **Level_3<br>Modular Skills<br>模組化技能庫<br>モジュールスキル** | `Level_3_Modular_Skills/` | Skill Folders (`SKILL.md`, `scripts/`, `manifest`) | **🟡 Merge Import / 合併導入 / マージ**<br>🇬🇧 New skills are added. Same-named skill files are overwritten by the packaged version (local-only files are kept); the rollback snapshot holds the previous copy.<br>🇹🇼 新技能會增補；同名技能檔案會被封裝版本覆寫（僅存在於本機的檔案保留），還原快照保存舊版。<br>🇯🇵 新しいスキルは追加されます。同名のスキルファイルはパッケージ版で上書きされ（ローカルのみのファイルは保持）、以前の内容はロールバック用スナップショットに残ります。 |
 | **Level_4<br>Workspace Docs<br>專案工程文檔<br>プロジェクト文書** | `Level_4_Workspace_Docs/` | Markdown Notes, SOPs, Python Scripts | **🔵 Incremental Sync / 增量同步 / 増分同期**<br>🇬🇧 Syncs workspace files while preserving newer local files on target.<br>🇹🇼 工作區檔案增量同步，目標目錄已有之同名檔案保留本機最新版。<br>🇯🇵 ワークスペース文書を増分同期（移行先の新しい同名ファイルは維持）。 |
 | **Level_5<br>Heavy Media<br>龐大素材資料<br>大容量メディア** | `Level_5_Heavy_References/` | Large PDFs, Videos, Datasets (>10MB - GBs) | **⚪ Not packed / 目前不打包 / 現在は梱包しません**<br>🇬🇧 Counted in the audit but not packed. There is no splitting yet.<br>🇹🇼 只在審計表計數，目前不打包，也尚無分卷功能。<br>🇯🇵 監査表に件数のみ表示し、梱包しません。分割機能は未実装です。 |
+| **Level_6<br>Memory drop<br>記憶匯出<br>メモリ書き出し** | `Level_6_Memory_Drop/` | Grok memory-drop JSONL (`shared-user/`, `agents/<uuid>/`) | **🟣 Incoming only / 只進 incoming / incoming のみ**<br>🇬🇧 Packed. Restore does not write platform memory. Each bot imports its own `fact` lines.<br>🇹🇼 會打包。還原不寫入平台記憶，需由各 Bot 自行匯入 `fact`。<br>🇯🇵 梱包します。復元はプラットフォームのメモリを書きません。各 Bot が自分の `fact` を取り込みます。 |
+| **Level_7<br>Conversations<br>對話快照<br>会話スナップショット** | `Level_7_Conversations/` | Read-only `search-index.db` snapshot + `agent-transcripts/` | **🔒 Not restored over live data / 不覆蓋 live 資料 / 稼働中データは上書きしない**<br>🇬🇧 SQLite `backup()` snapshot plus transcripts. Never replace the live index or transcripts.<br>🇹🇼 以 SQLite `backup()` 做快照並附上逐字稿。絕不取代 live 索引或逐字稿。<br>🇯🇵 SQLite `backup()` のスナップショットとトランスクリプト。稼働中の索引や逐字稿は置き換えません。 |
 
+
+---
+
+## Grok Bot 設定檔
+
+`--profile auto`（預設）在 agent-data 目錄存在時選擇 Grok Bot，否則維持 Antigravity。沒有該目錄時，Antigravity 行為不變。
+
+| 變數 | 也接受 | 預設 |
+| :--- | :--- | :--- |
+| `GROK_AGENT_DATA` | `AGENT_DATA` | `/home/box/agent-data` |
+| `GROK_WORKSPACE` | `WORKSPACE` | `/workspace` |
+| `GROK_MEMORY_DROP` | `MEMORY_DROP` | `$GROK_WORKSPACE/exports/memory-drop` |
+| `GROK_CURSOR_STORES` | | `/cursor/stores` |
+
+使用者技能只來自 `workflows/`。`managed-skills/` 與 `plugin-skills/` 不打包。Level_6 是每個 Bot 自己匯出的 memory-drop JSONL。Level_7 是 `search-index.db` 的唯讀 SQLite 快照與 `agent-transcripts/`。`/cursor/stores` 為實驗性清單，預設不打包，還原也不會寫回。尚未在 live Pages 主機驗證。
+
+預設排除 `box-secrets.json`、`host-secrets.json`、`chrome-cookie-seed.json`、`gateway.json`、`teach-queue-key.json`，以及 agent-data 頂層的 `*-secrets.json`。`--encrypt` 使用 OpenSSL AES-256-CBC（`-pbkdf2 -iter 200000 -salt`），密碼來自 `UAWT_ENCRYPT_PASSPHRASE` 或提示，不接受命令列參數。
+
+還原仍走兩次確認與回滾快照。直接寫入的只有工作區檔案與使用者技能。身份、設定、例行工作、記憶以 `.incoming` 加 `.grok-restore-incoming/<id>/MANUAL_REBUILD.md` 交付。不覆蓋 live 的 `profile.json`、`search-index.db`、逐字稿，也不建立不存在的 Bot 目錄。`--uuid-map OLD=NEW` 改寫文字檔中的 id 與絕對路徑。打包前請每個 Bot 自己匯出記憶（見 `AI_GUIDED_WIZARD_PROMPTS.md`）。測試使用合成目錄（`tests/test_grok_profile.py`），尚未在 live Grok Bot 上執行。
+
+```bash
+python workspace_toolkit.py --mode pack --profile grok -y
+python workspace_toolkit.py --mode restore --uuid-map OLD=NEW --target-env existing -y
+```
 
 ---
 
@@ -156,6 +183,11 @@ universal-agent-workspace-toolkit/
 ├── toolkit_scanner.py            # Level_0 Secret Gate & Level_1-5 Scanner (資安與資產掃描器 / 監査スキャナー)
 ├── toolkit_pack.py               # Staging, Manifest & Zip Engine (階梯封裝引擎 / パッケージ化エンジン)
 ├── toolkit_restore.py            # Impact Report, Snapshot & Deployer (衝擊評估與還原引擎 / リストアエンジン)
+├── toolkit_grok.py               # Grok Bot profile: scan, pack, conservative restore
+├── toolkit_crypto.py             # Optional OpenSSL AES-256-CBC encryption (--encrypt)
+├── tests/                        # Synthetic Grok box + Antigravity regression
+├── LICENSE                       # MIT License (copyright ycaistudio, 2026)
+├── THIRD_PARTY_NOTICES.md        # MIT notice for studied grok-bot-backup layout
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
 ├── AI_GUIDED_WIZARD_PROMPTS.md   # Natural Language Prompt Templates (自然語言引導詞 / 対話プロンプト集)
@@ -181,5 +213,5 @@ universal-agent-workspace-toolkit/
 * **還原**：只使用找到的最新封裝（依 `created_at`），解壓到每次全新的暫存資料夾並於結束後刪除；不論是否加 `-y`，都會先為可能被覆寫的內容建立還原快照。同名技能檔案與工作區文件會被覆寫；`existing` 模式下 `AGENTS.md` 與 MCP 設定保留，封裝版本另存為 `.incoming`。
 * **IDE 設定**：還原時會在目標電腦已安裝的 IDE 設定中加入 `"security.promptForLocalFileProtocolHandling": false`（可用 `--skip-ide-protocol-patch` 關閉）。不是純 JSON 的檔案（例如含註解的 VS Code 設定）不會被修改，只會印出要手動加入的行；修改前會先備份為 `settings.json.bak-<時間>`。
 * **Level 5** 大檔只在審計表計數，不打包。
-* **狀態**：已在 Google Antigravity 目錄結構驗證，其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
+* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔由 `tests/test_grok_profile.py` 以合成目錄測試，尚未在 live Grok Bot 主機執行。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
 

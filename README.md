@@ -1,4 +1,4 @@
-# Universal AI Agent Workspace Toolkit (v2.1.0)
+# Universal AI Agent Workspace Toolkit (v2.2.0)
 **Universal Agent-Native Workspace Management, Migration & Disaster Recovery Hub**  
 *通用 AI 智能體工作區全域管理、遷移與快照還原工具 (開源標準版)*  
 *汎用 AI エージェント ワークスペース全域管理・移行・スナップショット復元ツール (オープンソース標準版)*
@@ -101,11 +101,12 @@ It provides a unified, cross-platform engine (`workspace_toolkit.py`) for:
 | **Claude (Code / Desktop)** | `CLAUDE.md` | `claude_desktop_config.json` | Custom Commands / 支援命令 / コマンド対応 | ✅ Auto-Adapted / 自動適配 / 自動適合 |
 | **VS Code (Cline / Roo)** | `.clinerules` | `cline_mcp_settings.json` | Incremental / 增量導入 / 増分導入 | ✅ Auto-Injected / 自動注入 / 自動注入 |
 | **Windsurf** | `.windsurfrules` | Standard JSON / 通用規範 / 標準JSON | Incremental / 增量導入 / 増分導入 | ✅ Auto-Injected / 自動注入 / 自動注入 |
+| **Grok Bot** | `agents/<uuid>/profile.json` → `.incoming` / 另存 `.incoming` / `.incoming` で保存 | No MCP. Settings and routines are `.incoming` only / 不覆蓋 live 設定 / 稼働中設定は上書きしない | `agent-data/workflows/` (user skills). `managed-skills/` and `plugin-skills/` are not packed | Not injected. Level_6 memory-drop + Level_7 read-only conversations / 不注入 / 注入しない |
 
 
 ---
 
-## 🛡️ Asset Defense Hierarchy / 六級資產防禦階梯 / 6段階の資産防護階層
+## 🛡️ Asset Defense Hierarchy / 資產防禦階梯 / 資産防護階層
 
 | Level / 級別 / 階層 | Directory / 目錄名稱 / ディレクトリ | Contained Assets / 包含內容 / 構成要素 | Defense Strategy / 防禦策略 / 防護戦略 |
 | :--- | :--- | :--- | :--- |
@@ -115,7 +116,64 @@ It provides a unified, cross-platform engine (`workspace_toolkit.py`) for:
 | **Level_3<br>Modular Skills<br>模組化技能庫<br>モジュールスキル** | `Level_3_Modular_Skills/` | Skill Folders (`SKILL.md`, `scripts/`, `manifest`) | **🟡 Merge Import / 合併導入 / マージ**<br>🇬🇧 New skills are added. Same-named skill files are overwritten by the packaged version (local-only files are kept); the rollback snapshot holds the previous copy.<br>🇹🇼 新技能會增補；同名技能檔案會被封裝版本覆寫（僅存在於本機的檔案保留），還原快照保存舊版。<br>🇯🇵 新しいスキルは追加されます。同名のスキルファイルはパッケージ版で上書きされ（ローカルのみのファイルは保持）、以前の内容はロールバック用スナップショットに残ります。 |
 | **Level_4<br>Workspace Docs<br>專案工程文檔<br>プロジェクト文書** | `Level_4_Workspace_Docs/` | Markdown Notes, SOPs, Python Scripts | **🔵 Incremental Sync / 增量同步 / 増分同期**<br>🇬🇧 Syncs workspace files while preserving newer local files on target.<br>🇹🇼 工作區檔案增量同步，目標目錄已有之同名檔案保留本機最新版。<br>🇯🇵 ワークスペース文書を増分同期（移行先の新しい同名ファイルは維持）。 |
 | **Level_5<br>Heavy Media<br>龐大素材資料<br>大容量メディア** | `Level_5_Heavy_References/` | Large PDFs, Videos, Datasets (>10MB - GBs) | **⚪ Not packed / 目前不打包 / 現在は梱包しません**<br>🇬🇧 Counted in the audit but not packed. There is no splitting yet.<br>🇹🇼 只在審計表計數，目前不打包，也尚無分卷功能。<br>🇯🇵 監査表に件数のみ表示し、梱包しません。分割機能は未実装です。 |
+| **Level_6<br>Memory drop<br>記憶匯出<br>メモリ書き出し** | `Level_6_Memory_Drop/` | Grok memory-drop JSONL (`shared-user/`, `agents/<uuid>/`) | **🟣 Incoming only / 只進 incoming / incoming のみ**<br>🇬🇧 Packed. Restore does not write platform memory. Each bot imports its own `fact` lines.<br>🇹🇼 會打包。還原不寫入平台記憶，需由各 Bot 自行匯入 `fact`。<br>🇯🇵 梱包します。復元はプラットフォームのメモリを書きません。各 Bot が自分の `fact` を取り込みます。 |
+| **Level_7<br>Conversations<br>對話快照<br>会話スナップショット** | `Level_7_Conversations/` | Read-only `search-index.db` snapshot + `agent-transcripts/` | **🔒 Not restored over live data / 不覆蓋 live 資料 / 稼働中データは上書きしない**<br>🇬🇧 SQLite `backup()` snapshot plus transcripts. Never replace the live index or transcripts.<br>🇹🇼 以 SQLite `backup()` 做快照並附上逐字稿。絕不取代 live 索引或逐字稿。<br>🇯🇵 SQLite `backup()` のスナップショットとトランスクリプト。稼働中の索引や逐字稿は置き換えません。 |
 
+
+---
+
+## Grok Bot profile / Grok Bot 設定檔 / Grok Bot プロファイル
+
+### 🇬🇧 English
+`--profile auto` (the default) selects **Grok Bot** when the agent-data directory exists, and **Antigravity** otherwise. Force either with `--profile grok|antigravity` or `UAWT_PROFILE`. Antigravity pack and restore are unchanged on a machine that does not have agent-data.
+
+| Variable | Also reads | Default |
+| :--- | :--- | :--- |
+| `GROK_AGENT_DATA` | `AGENT_DATA` | `/home/box/agent-data` |
+| `GROK_WORKSPACE` | `WORKSPACE` | `/workspace` |
+| `GROK_MEMORY_DROP` | `MEMORY_DROP` | `$GROK_WORKSPACE/exports/memory-drop` |
+| `GROK_CURSOR_STORES` | | `/cursor/stores` |
+
+What is packed: profile, avatar, and `group.json` (Level_1); `settings.json` and `automations/` routines (Level_2); user skills under `workflows/` (Level_3). `managed-skills/` and `plugin-skills/` are host skills and are not packed. Workspace files, notes, reference, attachments, private, and projects go to Level_4. Files over 10MB stay Level_5 (counted, not packed), except memory and conversations. Level_6 is the memory-drop JSONL each bot must export itself. Level_7 is a SQLite `backup()` snapshot of `search-index.db` plus `agent-transcripts/` (`sand-subagent-*` needs `--include-subagents`).
+
+`/cursor/stores` is **experimental**. The manifest lists directory names only. Contents are packed only with `--include-cursor-stores`, and restore never writes them back. This was not checked on a live Pages host.
+
+Secrets stay out unless `--include-secrets`: `box-secrets.json`, `host-secrets.json`, `chrome-cookie-seed.json`, `gateway.json`, `teach-queue-key.json`, any top-level `*-secrets.json` in agent-data, plus the existing Level_0 rules. Secret-shaped JSON values in packed settings are replaced with `__REDACTED_RESTORE_MANUALLY__`.
+
+`--encrypt` wraps the zip with OpenSSL AES-256-CBC (`-pbkdf2 -iter 200000 -salt`). The passphrase is `UAWT_ENCRYPT_PASSPHRASE` or a prompt, never a command-line argument. OpenSSL must be on `PATH`. If encryption fails, the plaintext zip is left in place and the command exits with an error.
+
+```bash
+openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+  -in PACKAGE.zip -out PACKAGE.zip.enc -pass env:UAWT_ENCRYPT_PASSPHRASE
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+  -in PACKAGE.zip.enc -out PACKAGE.zip -pass env:UAWT_ENCRYPT_PASSPHRASE
+```
+
+Restore still uses the two confirmations and a rollback snapshot (`.grok-pre-restore-snapshot_*`). It writes workspace files and user skills. Profile, settings, routines, and memory-drop files are written as `.incoming` only when that bot directory already exists, and always into `.grok-restore-incoming/<id>/MANUAL_REBUILD.md`. It does not replace live `profile.json`, routines, `search-index.db`, or transcripts, and it does not create a missing bot directory. `--uuid-map OLD=NEW` (or `--uuid-map-file`) rewrites ids and recorded absolute paths in text files. The snapshot database is not rewritten.
+
+Before packing, ask every bot to export memory. The toolkit cannot call RecallMemory. See `AI_GUIDED_WIZARD_PROMPTS.md`.
+
+```bash
+python workspace_toolkit.py --mode pack --profile grok -y
+UAWT_ENCRYPT_PASSPHRASE='choose-one' python workspace_toolkit.py --mode pack --profile grok --encrypt -y
+python workspace_toolkit.py --mode restore --uuid-map OLD=NEW --target-env existing -y
+```
+
+The Grok profile is tested with `tests/test_grok_profile.py` on a synthetic box. It has not been run on a live Grok Bot host.
+
+### 🇹🇼 繁體中文
+預設 `--profile auto`：有 agent-data 目錄就走 **Grok Bot**，否則維持 **Antigravity**。沒有該目錄時，Antigravity 的打包與還原行為不變。
+
+打包範圍見上表 Level_1 到 Level_7。`managed-skills/` 與 `plugin-skills/` 不打包。`/cursor/stores` 標成實驗性，預設只列名稱。機密預設排除（含 `box-secrets.json`、`host-secrets.json`、`chrome-cookie-seed.json`、`gateway.json`、`teach-queue-key.json` 與 agent-data 頂層 `*-secrets.json`）。`--encrypt` 需要系統上的 OpenSSL，密碼放在 `UAWT_ENCRYPT_PASSPHRASE` 或互動輸入。
+
+還原只直接寫入工作區與使用者技能。身份、設定、例行工作與 memory-drop 以 `.incoming` 和 `MANUAL_REBUILD.md` 交付，不覆蓋 live 的 `search-index.db` 或逐字稿，也不會新建不存在的 Bot 目錄。`--uuid-map OLD=NEW` 會改寫文字檔裡的 id 與路徑。打包前請每個 Bot 自己匯出 memory-drop（見引導提示詞）。此設定檔只用合成目錄測試過，尚未在 live Grok Bot 主機上執行。
+
+### 🇯🇵 日本語
+既定の `--profile auto` は、agent-data ディレクトリがあるときだけ **Grok Bot** を選び、無いときは **Antigravity** のままです。そのディレクトリが無いマシンでは、Antigravity の梱包と復元は変わりません。
+
+範囲は Level_1〜7 です。`managed-skills/` と `plugin-skills/` は梱包しません。`/cursor/stores` は実験的で、既定では名前だけを記録します。`box-secrets.json`、`host-secrets.json`、`chrome-cookie-seed.json`、`gateway.json`、`teach-queue-key.json`、agent-data 直下の `*-secrets.json` は既定で除外します。`--encrypt` は PATH 上の OpenSSL を使い、パスフレーズは `UAWT_ENCRYPT_PASSPHRASE` かプロンプトです。
+
+復元が直接書くのはワークスペースとユーザースキルだけです。プロフィール、設定、ルーチン、memory-drop は `.incoming` と `MANUAL_REBUILD.md` に置き、稼働中の `search-index.db` やトランスクリプトは置き換えません。存在しない Bot ディレクトリは作りません。`--uuid-map OLD=NEW` はテキスト中の id とパスを書き換えます。梱包前に、各 Bot 自身が memory-drop を書き出してください。このプロファイルは合成ツリーのテストのみで、live の Grok Bot ホストでは未実行です。
 
 ---
 
@@ -319,6 +377,11 @@ universal-agent-workspace-toolkit/
 ├── toolkit_scanner.py            # Level_0 Secret Gate & Level_1-5 Scanner (資安與資產掃描器 / 監査スキャナー)
 ├── toolkit_pack.py               # Staging, Manifest & Zip Engine (階梯封裝引擎 / パッケージ化エンジン)
 ├── toolkit_restore.py            # Impact Report, Snapshot & Deployer (衝擊評估與還原引擎 / リストアエンジン)
+├── toolkit_grok.py               # Grok Bot profile: scan, pack, conservative restore
+├── toolkit_crypto.py             # Optional OpenSSL AES-256-CBC encryption (--encrypt)
+├── tests/                        # Synthetic Grok box + Antigravity regression
+├── LICENSE                       # MIT License (copyright ycaistudio, 2026)
+├── THIRD_PARTY_NOTICES.md        # MIT notice for studied grok-bot-backup layout
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
 ├── AI_GUIDED_WIZARD_PROMPTS.md   # Natural Language Prompt Templates (自然語言引導詞 / 対話プロンプト集)
@@ -344,16 +407,16 @@ universal-agent-workspace-toolkit/
 * **Restore**: uses only the newest package it finds (by `created_at`), extracts to a fresh temporary folder that is deleted afterwards, and always creates a rollback snapshot (with or without `-y`) of everything it may overwrite. Same-named skill files and workspace documents are overwritten; in `existing` mode `AGENTS.md` and MCP config are kept and the incoming copies saved as `.incoming`.
 * **IDE settings**: restore adds `"security.promptForLocalFileProtocolHandling": false` to the settings of IDEs already installed on the target (pass `--skip-ide-protocol-patch` to disable). Files that are not plain JSON (for example VS Code settings with comments) are never edited; the line to add is printed instead. A backup `settings.json.bak-<time>` is made before any edit.
 * **Level 5** heavy media is counted in the audit but not packed.
-* **Status**: verified on the Google Antigravity directory layout. Other agents are untested. Automated tests were run on Linux only.
+* **Status**: verified on the Google Antigravity directory layout. The Grok Bot profile is covered by `tests/test_grok_profile.py` on a synthetic box, not a live Grok Bot host. `/cursor/stores` listing is experimental. Other agents are untested. Automated tests were run on Linux only.
 
 * **機密**：預設不打包已知憑證檔案、私鑰區塊與真實格式的 API Token，MCP 機密值以 `__REDACTED_RESTORE_MANUALLY__` 取代；加上 `--include-secrets` 即可一併帶走。所有排除與遮蔽項目都列在封裝報告與 `package_manifest.json`。封裝檔完成後的保管由使用者負責。
 * **還原**：只使用找到的最新封裝（依 `created_at`），解壓到每次全新的暫存資料夾並於結束後刪除；不論是否加 `-y`，都會先為可能被覆寫的內容建立還原快照。同名技能檔案與工作區文件會被覆寫；`existing` 模式下 `AGENTS.md` 與 MCP 設定保留，封裝版本另存為 `.incoming`。
 * **IDE 設定**：還原時會在目標電腦已安裝的 IDE 設定中加入 `"security.promptForLocalFileProtocolHandling": false`（可用 `--skip-ide-protocol-patch` 關閉）。不是純 JSON 的檔案（例如含註解的 VS Code 設定）不會被修改，只會印出要手動加入的行；修改前會先備份為 `settings.json.bak-<時間>`。
 * **Level 5** 大檔只在審計表計數，不打包。
-* **狀態**：已在 Google Antigravity 目錄結構驗證，其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
+* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔由 `tests/test_grok_profile.py` 以合成目錄測試，尚未在 live Grok Bot 主機執行。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
 
 * **機密情報**：既定では既知の認証情報ファイル、秘密鍵ブロック、実在形式の API トークンは梱包されず、MCP の機密値は `__REDACTED_RESTORE_MANUALLY__` に置換されます。`--include-secrets` を付けると含められます。除外・置換した項目は、パック時のレポートと `package_manifest.json` に一覧表示されます。作成後のパッケージの管理はユーザーの責任です。
 * **復元**：見つかった最新のパッケージ（`created_at` 基準）のみを使い、毎回新しい一時フォルダーに展開して終了後に削除します。`-y` の有無にかかわらず、上書きされる可能性のある内容のスナップショットを必ず作成します。同名のスキルファイルとワークスペース文書は上書きされ、`existing` モードでは `AGENTS.md` と MCP 設定が保持され、新しい版は `.incoming` として保存されます。
 * **IDE 設定**：復元時、移行先にインストール済みの IDE の設定に `"security.promptForLocalFileProtocolHandling": false` を追加します（`--skip-ide-protocol-patch` で無効化）。通常の JSON でないファイル（コメント付きの VS Code 設定など）は編集せず、追加すべき行を表示します。編集前に `settings.json.bak-<時刻>` としてバックアップします。
 * **Level 5** の大容量メディアは監査表に件数のみ表示し、梱包しません。
-* **状況**：Google Antigravity のディレクトリ構成で動作確認済み。他のエージェントは未検証で、自動テストは Linux のみで実行しています。
+* **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは `tests/test_grok_profile.py` の合成ツリーでテストしており、live の Grok Bot ホストでは未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証で、自動テストは Linux のみで実行しています。
