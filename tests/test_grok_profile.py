@@ -13,7 +13,10 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from toolkit_crypto import (  # noqa: E402
+    ENVELOPE_MAGIC,
     OPENSSL_CIPHER,
+    EncryptionError,
+    decrypt_package,
     encrypt_package,
     encrypted_candidate,
     openssl_enc_command,
@@ -22,6 +25,7 @@ from toolkit_crypto import (  # noqa: E402
 )
 from toolkit_grok import (  # noqa: E402
     GrokError,
+    L2,
     L3,
     L5,
     L6,
@@ -31,6 +35,7 @@ from toolkit_grok import (  # noqa: E402
     create_grok_snapshot,
     detect_profile,
     execute_grok_restore,
+    level_audit_count,
     parse_uuid_map,
     run_grok_pack,
     scan_grok_assets,
@@ -70,10 +75,18 @@ def _manifest(path):
 class DetectTests(unittest.TestCase):
     def test_auto_requires_agent_data_directory(self):
         # --profile auto does not follow UAWT_PROFILE, and a missing directory stays Antigravity.
-        self.assertEqual(detect_profile("auto", {"UAWT_PROFILE": "grok"}), "antigravity")
-        self.assertEqual(detect_profile(None, {"UAWT_PROFILE": "grok"}), "grok")
+        # The path is injected so this host's /home/box/agent-data cannot change the result.
+        missing = "/no/such/dir"
+        self.assertEqual(
+            detect_profile("auto", {"UAWT_PROFILE": "grok", "GROK_AGENT_DATA": missing}),
+            "antigravity",
+        )
+        self.assertEqual(
+            detect_profile(None, {"UAWT_PROFILE": "grok", "GROK_AGENT_DATA": missing}),
+            "grok",
+        )
         self.assertEqual(detect_profile("antigravity", {"GROK_AGENT_DATA": "/no/such/agent-data"}), "antigravity")
-        self.assertEqual(detect_profile(None, {}), "antigravity")
+        self.assertEqual(detect_profile(None, {"GROK_AGENT_DATA": missing}), "antigravity")
 
     def test_auto_selects_grok_when_agent_data_exists(self):
         import tempfile
@@ -398,6 +411,123 @@ class GrokBoxTests(unittest.TestCase):
         plain.write_bytes(original)
         os.utime(plain, None)
         self.assertIsNone(encrypted_candidate(plain.parent))
+
+    def test_skips_virtualenv_site_packages_and_node_modules(self):
+        proj = self.src_ws / "proj"
+        (proj / "node_modules" / "leftpad").mkdir(parents=True)
+        (proj / "node_modules" / "leftpad" / "index.js").write_text("NODE_SENTINEL", encoding="utf-8")
+        (proj / "keep.py").write_text("KEEP_SENTINEL_grok\n", encoding="utf-8")
+        (proj / "site-packages").mkdir()
+        (proj / "site-packages" / "mod.py").write_text("SITE_SENTINEL\n", encoding="utf-8")
+        cvenv = self.src_ws / "cvenv"
+        (cvenv / "lib" / "python" / "site-packages").mkdir(parents=True)
+        (cvenv / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+        (cvenv / "lib" / "python" / "site-packages" / "pkg.py").write_text("VENV_SENTINEL\n", encoding="utf-8")
+        assets = scan_grok_assets(self._paths(), include_bulky=True, exclude_roots=[self.out])
+        arcs = "\n".join(item["arc"] for item in assets["files"])
+        self.assertIn("proj/keep.py", arcs)
+        self.assertNotIn("node_modules", arcs)
+        self.assertNotIn("site-packages", arcs)
+        self.assertNotIn("cvenv", arcs)
+        self.assertNotIn("VENV_SENTINEL", arcs)
+        skipped = " ".join(str(path) for path, _ in assets["skipped"])
+        self.assertIn("node_modules", skipped)
+        self.assertIn("cvenv", skipped)
+        self.assertIn("site-packages", skipped)
+
+    def test_store_db_snapshot_goes_to_level7(self):
+        agent = self.src_data / "agents" / SRC
+        conn = sqlite3.connect(agent / "store.db")
+        conn.execute("create table kv (k text, v text)")
+        conn.execute("insert into kv values ('row', 'STORE_ROW_SENTINEL')")
+        conn.commit()
+        conn.close()
+        (agent / "store.db-wal").write_bytes(b"WAL_SENTINEL_BYTES")
+        (agent / "store.db-shm").write_bytes(b"SHM_SENTINEL_BYTES")
+        assets, result = self._pack()
+        self.assertTrue(any(
+            item["level"] == L7 and item["arc"].endswith("store-snapshot.db") and item.get("sqlite_snapshot")
+            for item in assets["files"]
+        ))
+        self.assertFalse(any(item["level"] == L2 and item["arc"].endswith("store.db") for item in assets["files"]))
+        self.assertTrue(any(item["arc"] == "search-index-snapshot.db" and item["level"] == L7 for item in assets["files"]))
+        self.assertEqual(
+            level_audit_count(assets, L7),
+            sum(1 for item in assets["files"] if item["level"] == L7) + 1,
+        )
+        blob = _zip_blob(result["zip_path"])
+        self.assertNotIn(b"WAL_SENTINEL_BYTES", blob)
+        self.assertNotIn(b"SHM_SENTINEL_BYTES", blob)
+        with zipfile.ZipFile(result["zip_path"]) as archive:
+            names = archive.namelist()
+            self.assertFalse(any(name.endswith("store.db-wal") or name.endswith("store.db-shm") for name in names))
+            self.assertFalse(any(name.endswith("/extra/store.db") for name in names))
+            snap_name = next(name for name in names if name.endswith("store-snapshot.db"))
+            self.assertTrue(snap_name.startswith(f"{L7}/"))
+            raw = archive.read(snap_name)
+        snap = self.root / "store-snap.db"
+        snap.write_bytes(raw)
+        with sqlite3.connect(snap) as conn:
+            self.assertEqual(conn.execute("select v from kv").fetchone()[0], "STORE_ROW_SENTINEL")
+        stores = _manifest(result["zip_path"])["conversations"]["agent_stores"]
+        self.assertEqual(stores[0]["agent_id"], SRC)
+        self.assertTrue(stores[0]["consistent_snapshot"])
+
+    def test_empty_automations_reports_zero_routines(self):
+        empty = "33333333-3333-4333-8333-333333333333"
+        bot = self.src_data / "agents" / empty
+        (bot / "automations").mkdir(parents=True)
+        (bot / "profile.json").write_text('{"name":"Empty Bot"}', encoding="utf-8")
+        assets = scan_grok_assets(self._paths(), exclude_roots=[self.out])
+        by_id = {agent["id"]: agent for agent in assets["agents"]}
+        self.assertEqual(by_id[empty]["routines"], 0)
+        self.assertEqual(by_id[SRC]["routines"], 1)
+
+    def test_lockfiles_stay_intact_and_flags_are_per_folder(self):
+        (self.src_ws / "tokenizer_config.json").write_text(
+            json.dumps({"tokenizer_class": "KEEP_CLASS_grok", "model_max_length": 8}),
+            encoding="utf-8",
+        )
+        (self.src_ws / "package-lock.json").write_text(
+            json.dumps({"name": "demo", "lockfileVersion": 3}),
+            encoding="utf-8",
+        )
+        folder = self.src_ws / "notes"
+        folder.mkdir()
+        for index in range(3):
+            (folder / f"note{index}.md").write_text(f"token: value{index}\n", encoding="utf-8")
+        _, result = self._pack()
+        with zipfile.ZipFile(result["zip_path"]) as archive:
+            packed = archive.read("Level_4_Workspace_Docs/workspace/tokenizer_config.json").decode()
+            lock = archive.read("Level_4_Workspace_Docs/workspace/package-lock.json").decode()
+        self.assertIn("KEEP_CLASS_grok", packed)
+        self.assertNotIn(REDACTED, packed)
+        self.assertIn("lockfileVersion", lock)
+        manifest = _manifest(result["zip_path"])
+        self.assertGreaterEqual(manifest["flagged_count"], 3)
+        self.assertTrue(manifest["flagged"])
+        self.assertTrue(all("count" in row and "folder" in row for row in manifest["flagged"]))
+        self.assertNotIn("path", manifest["flagged"][0])
+        notes = [row for row in manifest["flagged"] if row["folder"].endswith("notes")]
+        self.assertEqual(notes[0]["count"], 3)
+
+    def test_encrypt_rejects_wrong_passphrase_and_tamper_without_output(self):
+        if not openssl_path():
+            self.skipTest("openssl is not installed")
+        _, result = self._pack()
+        enc = encrypt_package(result["zip_path"], "test-passphrase")
+        self.assertTrue(enc.read_bytes().startswith(ENVELOPE_MAGIC))
+        dest = self.root / "should-not-exist.zip"
+        with self.assertRaises(EncryptionError):
+            decrypt_package(enc, "wrong-passphrase", dest=dest)
+        self.assertFalse(dest.exists())
+        data = bytearray(enc.read_bytes())
+        data[-1] ^= 0xFF
+        enc.write_bytes(data)
+        dest2 = self.root / "should-not-exist-either.zip"
+        with self.assertRaises(EncryptionError):
+            decrypt_package(enc, "test-passphrase", dest=dest2)
+        self.assertFalse(dest2.exists())
 
 
 class CliTests(unittest.TestCase):
