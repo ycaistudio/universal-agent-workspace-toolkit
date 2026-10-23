@@ -20,6 +20,8 @@
      - `Level_3_Modular_Skills`（模組化可插拔技能庫 · 合併導入，同名檔案覆寫前先建立快照）
      - `Level_4_Workspace_Docs`（專案工程文檔與腳本 · 增量同步）
      - `Level_5_Heavy_References`（龐大素材與二進制 · 目前只計數，不打包）
+     - `Level_6_Memory_Drop`（Grok Bot 設定檔 · memory-drop JSONL · 還原只寫 `.incoming`）
+     - `Level_7_Conversations`（Grok Bot 設定檔 · search-index 唯讀快照與逐字稿 · 不覆蓋 live 索引）
 4. **單一封裝檔**：
    - 核心（Level 1~4）總量 $\le 100$MB，保持單一原子封裝（不切片，丟失風險 = 0）；
    - Level 5 大檔目前只計數，不打包（尚無分卷功能）。

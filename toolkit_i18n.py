@@ -72,7 +72,16 @@ MESSAGES = {
         "incoming_hdr": "Existing files were kept; incoming versions saved beside them as .incoming:",
         "pkg_chosen": "Using package: {name}",
         "pkg_ignored": "Ignored: {name} ({why})",
-        "err_corrupt": "Package failed verification ({count} file(s)). Nothing was restored."
+        "err_corrupt": "Package failed verification ({count} file(s)). Nothing was restored.",
+        "profile_line": "Environment profile: {profile}",
+        "grok_not_written": "Not written to live platform data: profiles, routines, memory-drop, search-index.db, transcripts, /cursor/stores.",
+        "grok_experimental": "Cursor stores (experimental, not verified on a live Pages host): {summary}",
+        "encrypt_ok": "Package encrypted with OpenSSL AES-256-CBC (PBKDF2, 200000 iterations).",
+        "encrypt_fail": "Encryption failed. The plaintext zip is still at {path}. {detail}",
+        "encrypt_pass_missing": "Set UAWT_ENCRYPT_PASSPHRASE or run without -y so a passphrase can be prompted. It is never passed as an argument.",
+        "ask_passphrase": "Encryption passphrase (not echoed): ",
+        "grok_checklist": "Manual rebuild checklist: {path}",
+        "grok_skills_held": "agent-data is missing on this machine, so user skills were left in the incoming folder.",
     },
     "zh-tw": {
         "title": "Universal AI Agent 工作區全域管理中樞",
@@ -113,7 +122,16 @@ MESSAGES = {
         "incoming_hdr": "已保留現有檔案；新版本另存為 .incoming：",
         "pkg_chosen": "使用封裝：{name}",
         "pkg_ignored": "已略過：{name}（{why}）",
-        "err_corrupt": "封裝驗證失敗（{count} 個檔案），未進行任何還原。"
+        "err_corrupt": "封裝驗證失敗（{count} 個檔案），未進行任何還原。",
+        "profile_line": "環境設定檔：{profile}",
+        "grok_not_written": "沒有寫入平台正在使用的資料：身份設定、例行工作、memory-drop、search-index.db、逐字稿、/cursor/stores。",
+        "grok_experimental": "Cursor stores（實驗性，尚未在 live Pages 主機驗證）：{summary}",
+        "encrypt_ok": "已使用 OpenSSL AES-256-CBC（PBKDF2、200000 次迭代）加密封裝。",
+        "encrypt_fail": "加密失敗。明文 ZIP 仍在 {path}。{detail}",
+        "encrypt_pass_missing": "請設定 UAWT_ENCRYPT_PASSPHRASE，或不要加 -y 以便互動輸入密碼。密碼不會從命令列參數讀取。",
+        "ask_passphrase": "加密密碼（不會顯示）：",
+        "grok_checklist": "手動重建清單：{path}",
+        "grok_skills_held": "這部機器沒有 agent-data，使用者技能留在 incoming 資料夾。",
     },
     "ja": {
         "title": "Universal AI Agent ワークスペース管理ツール",
@@ -154,7 +172,16 @@ MESSAGES = {
         "incoming_hdr": "既存ファイルを保持し、新しい版を .incoming として隣に保存しました：",
         "pkg_chosen": "使用するパッケージ: {name}",
         "pkg_ignored": "無視: {name}（{why}）",
-        "err_corrupt": "パッケージの検証に失敗しました（{count} 件）。復元は行われていません。"
+        "err_corrupt": "パッケージの検証に失敗しました（{count} 件）。復元は行われていません。",
+        "profile_line": "環境プロファイル: {profile}",
+        "grok_not_written": "稼働中のプラットフォームデータには書いていません: プロフィール、ルーチン、memory-drop、search-index.db、トランスクリプト、/cursor/stores。",
+        "grok_experimental": "Cursor stores（実験的。live の Pages ホストでは未検証）: {summary}",
+        "encrypt_ok": "OpenSSL AES-256-CBC（PBKDF2、200000 回）でパッケージを暗号化しました。",
+        "encrypt_fail": "暗号化に失敗しました。平文 ZIP は {path} に残っています。{detail}",
+        "encrypt_pass_missing": "UAWT_ENCRYPT_PASSPHRASE を設定するか、-y を外してパスフレーズを入力してください。引数では受け取りません。",
+        "ask_passphrase": "暗号化パスフレーズ（表示されません）: ",
+        "grok_checklist": "手動再構築チェックリスト: {path}",
+        "grok_skills_held": "このマシンに agent-data が無いため、ユーザースキルは incoming フォルダに残しました。",
     }
 }
 
