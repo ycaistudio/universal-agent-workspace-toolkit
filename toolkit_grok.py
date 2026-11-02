@@ -636,7 +636,7 @@ def _write_record(src, payload, dest, staging_dir, level_number, file_manifest):
     return _record(staging_dir, dest, level_number, file_manifest)
 
 
-def _snapshot_sqlite(src, dest, allow_raw_copy=True):
+def _snapshot_sqlite(src, dest, allow_raw_copy=False):
     """Consistent snapshot via sqlite3 backup. Returns (ok, consistent, error).
 
     ``allow_raw_copy`` is only for the search index. Bot ``store.db`` files are
@@ -947,6 +947,53 @@ def parse_uuid_map(pairs=None, map_file=None):
     return mapped
 
 
+
+def is_safe_relative_path(path_str):
+    """Check that path_str has no traversal, drive specifiers, UNC prefixes, or null bytes."""
+    if not path_str or "\0" in str(path_str):
+        return False
+    norm = str(path_str).replace("\\", "/")
+    if norm.startswith("/") or norm.startswith("//"):
+        return False
+    if re.match(r"^[a-zA-Z]:", norm):
+        return False
+    parts = norm.split("/")
+    for part in parts:
+        if part in ("", ".", "..") or ":" in part:
+            return False
+    return True
+
+
+def safe_join_dest(base_dir, sub_path):
+    """Safely combine base_dir and sub_path ensuring no escape outside base_dir.
+
+    Verifies that no parent along the resolved path escapes base_dir or points
+    through an external symlink. Returns Path or raises ValueError.
+    """
+    if not is_safe_relative_path(sub_path):
+        raise ValueError(f"Illegal relative path: {sub_path}")
+    base_resolved = Path(base_dir).resolve()
+    target = Path(base_dir)
+    for part in str(sub_path).replace("\\", "/").split("/"):
+        target = target / part
+    # Walk existing ancestors to verify no external symlinks or escape
+    curr = target
+    while not curr.exists() and curr != Path(base_dir) and curr != curr.parent:
+        curr = curr.parent
+    if curr.exists():
+        curr_resolved = curr.resolve()
+        try:
+            curr_resolved.relative_to(base_resolved)
+        except ValueError:
+            raise ValueError(f"Path escape detected: {target} escapes {base_dir}")
+        if curr.is_symlink():
+            try:
+                curr_resolved.relative_to(base_resolved)
+            except ValueError:
+                raise ValueError(f"Symlink escape: {curr} points outside {base_dir}")
+    return target
+
+
 def _split_rel(rel):
     rel = rel.replace("\\", "/")
     level, sep, arc = rel.partition("/")
@@ -1007,10 +1054,13 @@ def build_restore_plan(staging_dir, manifest, dest_paths, target_env, uuid_map):
     workspace = Path(dest_paths["workspace"])
     agent_data = Path(dest_paths["agent_data"])
     tracking_id = manifest.get("tracking_id") or "restore"
-    kit = workspace / ".grok-restore-incoming" / tracking_id
+    try:
+        kit = safe_join_dest(workspace, f".grok-restore-incoming/{tracking_id}")
+    except ValueError:
+        kit = workspace / ".grok-restore-incoming" / "restore"
     actions = []
     for rel in manifest.get("file_manifest", {}):
-        if ".." in Path(rel).parts:
+        if not is_safe_relative_path(rel):
             continue
         src = staging_dir / rel
         try:
@@ -1022,9 +1072,11 @@ def build_restore_plan(staging_dir, manifest, dest_paths, target_env, uuid_map):
         if not src.is_file():
             continue
         level, arc = _split_rel(rel)
-        if level not in LEVEL_ORDER or not arc:
+        if level not in LEVEL_ORDER or not arc or not is_safe_relative_path(arc):
             continue
         mapped_arc = _remap_arc(arc, uuid_map)
+        if not is_safe_relative_path(mapped_arc):
+            continue
 
         def add(kind, dest, snapshot=True):
             actions.append({
@@ -1038,28 +1090,51 @@ def build_restore_plan(staging_dir, manifest, dest_paths, target_env, uuid_map):
             })
 
         if level == L3:
-            if agent_data.is_dir():
-                add("workflow", agent_data / "workflows" / mapped_arc)
-            else:
-                add("incoming", kit / level / mapped_arc, snapshot=True)
+            try:
+                if agent_data.is_dir():
+                    target = safe_join_dest(agent_data / "workflows", mapped_arc)
+                    add("workflow", target)
+                else:
+                    inc = safe_join_dest(kit, f"{level}/{mapped_arc}")
+                    add("incoming", inc, snapshot=True)
+            except ValueError:
+                continue
             continue
         if arc.startswith("workspace/") and level == L4:
-            add("workspace", workspace / arc[len("workspace/"):])
+            sub = arc[len("workspace/"):]
+            try:
+                target = safe_join_dest(workspace, sub)
+                add("workspace", target)
+            except ValueError:
+                continue
             continue
         if arc.startswith("workspace/") and level == L1:
-            target = workspace / arc[len("workspace/"):]
-            if target_env == "fresh":
+            sub = arc[len("workspace/"):]
+            try:
+                if target_env == "fresh":
+                    target = safe_join_dest(workspace, sub)
+                else:
+                    target = safe_join_dest(workspace, sub + ".incoming")
                 add("directive", target)
-            else:
-                add("directive", target.with_name(target.name + ".incoming"))
-            add("incoming", kit / level / mapped_arc, snapshot=True)
+                inc = safe_join_dest(kit, f"{level}/{mapped_arc}")
+                add("incoming", inc, snapshot=True)
+            except ValueError:
+                continue
             continue
-        add("incoming", kit / level / mapped_arc, snapshot=True)
+        try:
+            inc = safe_join_dest(kit, f"{level}/{mapped_arc}")
+            add("incoming", inc, snapshot=True)
+        except ValueError:
+            continue
         if level == L8:
             continue
         sidecar = _sidecar_destination(level, arc, agent_data, uuid_map)
         if sidecar is not None:
-            add("sidecar", sidecar)
+            try:
+                sidecar.resolve().relative_to(agent_data.resolve())
+                add("sidecar", sidecar)
+            except (ValueError, OSError):
+                pass
     return {"actions": actions, "kit": kit, "tracking_id": tracking_id}
 
 
@@ -1138,7 +1213,7 @@ def _apply_uuid_map(text, uuid_map):
     if not uuid_map or not text:
         return text
     keys = sorted(uuid_map, key=len, reverse=True)
-    pattern = re.compile("|".join(re.escape(key) for key in keys), re.IGNORECASE)
+    pattern = re.compile(r"\b(" + "|".join(re.escape(key) for key in keys) + r")\b", re.IGNORECASE)
     return pattern.sub(lambda match: uuid_map[match.group(0).lower()], text)
 
 
@@ -1253,17 +1328,28 @@ def execute_grok_restore(plan, manifest, user_home, dest_paths, uuid_map, lang="
 
 
 def _write_mapped(src, dest, replacements, uuid_map, remap):
-    if not remap or not _is_text_source(src):
-        shutil.copy2(win_p(src), win_p(dest))
-        return False
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    temp_dest = dest.parent / f".tmp_{uuid.uuid4().hex}_{dest.name}"
+    changed = False
     try:
-        text = Path(src).read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        shutil.copy2(win_p(src), win_p(dest))
-        return False
-    new = _apply_uuid_map(_apply_replacements(text, replacements), uuid_map)
-    dest.write_text(new, encoding="utf-8")
-    return new != text
+        if not remap or not _is_text_source(src):
+            shutil.copy2(win_p(src), win_p(temp_dest))
+        else:
+            try:
+                text = Path(src).read_text(encoding="utf-8")
+                new = _apply_uuid_map(_apply_replacements(text, replacements), uuid_map)
+                temp_dest.write_text(new, encoding="utf-8")
+                changed = (new != text)
+            except (OSError, UnicodeError):
+                shutil.copy2(win_p(src), win_p(temp_dest))
+        if dest.exists() and dest.is_symlink():
+            dest.unlink()
+        os.replace(win_p(temp_dest), win_p(dest))
+    finally:
+        if temp_dest.exists():
+            temp_dest.unlink(missing_ok=True)
+    return changed
 
 
 def build_checklist(lang, ctx):

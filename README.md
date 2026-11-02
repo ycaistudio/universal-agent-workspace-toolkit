@@ -95,8 +95,16 @@ It provides a unified, cross-platform engine (`workspace_toolkit.py`) for:
 
 ## 🧩 Ecosystem Compatibility Matrix / 生態相容性矩陣 / エコシステム対応状況
 
-| Platform / 開發環境 / プラットフォーム | Directives / 核心憲法 / 指示書 | MCP Servers / 工具擴充 / MCP設定 | Skills / 技能擴充 / スキル | Protocol Bypass / 協議免警告注入 / 警告回避注入 |
-| :--- | :---: | :---: | :---: | :---: |
+| Support Tier / 支援層級 | Platform / 開發環境 / プラットフォーム | Directives / 核心憲法 / 指示書 | MCP Servers / 工具擴充 / MCP設定 | Skills / 技能擴充 / スキル | Status / 狀態與驗證說明 |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Implemented<br>實裝全量驗收<br>実装・検証済** | **Google Antigravity** | `AGENTS.md` | `~/.gemini/antigravity/mcp/` | `~/.gemini/config/skills/` | ✅ **Fully Implemented & E2E Verified**.<br>Native directory adapter, path self-healing, and automated tests. |
+| **Implemented<br>實裝全量驗收<br>実装・検証済** | **Grok Bot** | `agents/<uuid>/profile.json` → `.incoming` | No MCP. Settings and routines to `.incoming` | `agent-data/workflows/` (user skills) | ✅ **Fully Implemented & E2E Verified**.<br>Dedicated Grok engine (`toolkit_grok.py`), memory-drop, and read-only DB snapshots. |
+| **Experimental<br>實驗性支援<br>実験的対応** | **Cursor** | `.cursorrules` / `.cursor/rules` | `~/.cursor/mcp.json` | Rules Detection | 🟡 **Experimental**.<br>Rule and stores inspection supported. Not a standalone agent runtime adapter. |
+| **Experimental<br>實驗性支援<br>実験的対応** | **VS Code (Cline / Roo)** | `.clinerules` | `cline_mcp_settings.json` | Incremental import | 🟡 **Experimental**.<br>Detects rules & MCP definitions. Security prompt bypass is explicit opt-in only. |
+| **Experimental<br>實驗性支援<br>実験的対応** | **Claude (Code / Desktop)** | `CLAUDE.md` | `claude_desktop_config.json` | Custom commands | 🟡 **Experimental**.<br>Basic file detection and desktop JSON mapping. |
+| **Planned<br>規劃中尚未實作<br>計画中・未実装** | **Windsurf** | `.windsurfrules` | Standard JSON | Planned | ⚪ **Planned**.<br>Full adapter planned for future releases. |
+
+--- | :---: | :---: | :---: | :---: |
 | **Google Antigravity** | `AGENTS.md` | `-/.gemini/antigravity/mcp/` | `-/.gemini/config/skills/` | ✅ Auto-Injected / 自動注入 / 自動注入 |
 | **Cursor** | `.cursorrules` / `.cursor/rules` | `-/.cursor/mcp.json` | Rules Adaptation / 轉換規範 / ルール変換 | ✅ Auto-Injected / 自動注入 / 自動注入 |
 | **Claude (Code / Desktop)** | `CLAUDE.md` | `claude_desktop_config.json` | Custom Commands / 支援命令 / コマンド対応 | ✅ Auto-Adapted / 自動適配 / 自動適合 |

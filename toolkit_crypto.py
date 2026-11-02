@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import os
 import shutil
+import uuid
 import subprocess
 import tempfile
 from pathlib import Path
@@ -185,8 +186,49 @@ def encrypt_package(zip_path, passphrase):
 
 
 def encrypt_packages(zip_paths, passphrase):
-    """Encrypt every part of a package. Each part becomes its own ``.zip.enc``."""
-    return [encrypt_package(path, passphrase) for path in zip_paths]
+    """Encrypt every part of a package transactionally (REL-02).
+
+    All parts are first encrypted to temporary destinations and verified.
+    Only after ALL parts succeed are the plaintext zips removed and the
+    encrypted packages committed. On failure of any part, all temporary
+    files are cleaned up and original plaintext zips remain intact.
+    """
+    temp_records = []
+    try:
+        for zp in zip_paths:
+            zp = Path(zp)
+            enc_final = Path(str(zp) + ".enc")
+            if enc_final.exists():
+                raise EncryptionError(f"{enc_final.name} already exists; refusing to overwrite it")
+            enc_temp = Path(str(zp) + f".enc_tmp_{uuid.uuid4().hex[:8]}")
+            cipher_temp = Path(str(zp) + f".cipher_tmp_{uuid.uuid4().hex[:8]}")
+            try:
+                _run_openssl(zp, cipher_temp, passphrase, decrypt=False)
+                _seal(cipher_temp, enc_temp, passphrase)
+                # Verify sealed envelope on temp file before committing
+                test_plain = decrypt_package(enc_temp, passphrase)
+                test_plain.unlink(missing_ok=True)
+            finally:
+                if cipher_temp.exists():
+                    cipher_temp.unlink(missing_ok=True)
+            temp_records.append((zp, enc_temp, enc_final))
+
+        # All parts succeeded and verified! Now commit atomically
+        final_paths = []
+        for zp, enc_temp, enc_final in temp_records:
+            os.replace(enc_temp, enc_final)
+            try:
+                os.chmod(enc_final, 0o600)
+            except OSError:
+                pass
+            zp.unlink(missing_ok=True)
+            final_paths.append(enc_final)
+        return final_paths
+    except Exception as e:
+        for _, enc_temp, _ in temp_records:
+            if enc_temp.exists():
+                enc_temp.unlink(missing_ok=True)
+        raise EncryptionError(f"Transactional encryption failed: {e}") from e
 
 
 def decrypt_package(enc_path, passphrase, dest=None):

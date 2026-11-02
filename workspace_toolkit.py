@@ -346,7 +346,9 @@ def main():
     parser.add_argument("--include-secrets", action="store_true",
                         help="Pack passwords, API keys and private keys too (default: excluded)")
     parser.add_argument("--skip-ide-protocol-patch", action="store_true",
-                        help="Restore: do not add the IDE file:/// prompt bypass")
+                        help="Legacy option (IDE prompt bypass is now disabled by default)")
+    parser.add_argument("--enable-ide-prompt-bypass", action="store_true", default=False,
+                        help="Restore: explicit opt-in to disable IDE security prompt for file:/// protocol (SEC-03)")
     parser.add_argument("--profile", choices=["auto", "antigravity", "grok"], default=None,
                         help="Environment profile (default: auto). Grok is selected when agent-data exists.")
     parser.add_argument("--encrypt", action="store_true",
@@ -533,7 +535,7 @@ def main():
             elif not target_env:
                 target_env = "existing"
 
-            apply_ide = not args.skip_ide_protocol_patch
+            apply_ide = bool(args.enable_ide_prompt_bypass)
             ws_dst = Path(args.workspace_dir).resolve() if args.workspace_dir else (user_home / "Documents" / "AI_Workspace").resolve()
             staging = audit["staging_dir"]
             impact = generate_impact_assessment(staging, target_env, user_home, ws_dst, apply_ide)
@@ -563,7 +565,7 @@ def main():
                 print("  Restore cancelled at Stage 2.")
                 return
 
-            res = execute_restore(staging, target_env, user_home, ws_dst, src_user=src_user, apply_ide=apply_ide)
+            res = execute_restore(staging, target_env, user_home, ws_dst, src_user=src_user, apply_ide=apply_ide, rollback_snapshot=snap)
             print("\n" + "=" * 68)
             print(f"  🎉 {t('restore_success')}")
             print("=" * 68)

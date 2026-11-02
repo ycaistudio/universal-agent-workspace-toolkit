@@ -207,6 +207,12 @@ def classify_file(fp, content_scan=True, warn_weak=True, broad_names=True):
 # ---------------------------------------------------------------- MCP redaction
 SECRET_KEY_RE = re.compile(r"(?i)(token|secret|passw(or)?d|api[_-]?key|authorization|credential|private[_-]?key|bearer)")
 CONTAINER_KEYS = {"env", "headers"}
+SENSITIVE_ARG_FLAGS = {
+    "--api-key", "--api_key", "--apikey",
+    "--token", "--auth-token", "--access-token",
+    "--password", "--passwd", "--secret", "--client-secret",
+    "--private-key", "-p", "--key", "--secret-key"
+}
 
 
 URL_CRED_RE = re.compile(r"(?<=://)([^/\s:@]+):([^/\s@]+)(?=@)")
@@ -244,15 +250,39 @@ def _redact(node, in_container=False):
         return out, count
     if isinstance(node, list):
         out = []
-        for v in node:
-            if isinstance(v, (dict, list)):
+        i = 0
+        while i < len(node):
+            v = node[i]
+            if isinstance(v, str):
+                vl = v.lower()
+                if "=" in v and any(vl.startswith(flag + "=") for flag in SENSITIVE_ARG_FLAGS):
+                    flag, _, _ = v.partition("=")
+                    out.append(f"{flag}={REDACTED}")
+                    count += 1
+                    i += 1
+                    continue
+                if vl in SENSITIVE_ARG_FLAGS and (i + 1) < len(node) and isinstance(node[i + 1], str):
+                    out.append(v)
+                    out.append(REDACTED)
+                    count += 1
+                    i += 2
+                    continue
+                if in_container:
+                    out.append(REDACTED)
+                    count += 1
+                else:
+                    nv, c = _scrub_str(v)
+                    out.append(nv)
+                    count += c
+                i += 1
+            elif isinstance(v, (dict, list)):
                 nv, c = _redact(v, in_container)
-            elif isinstance(v, str):
-                nv, c = _scrub_str(v)
+                out.append(nv)
+                count += c
+                i += 1
             else:
-                nv, c = v, 0
-            out.append(nv)
-            count += c
+                out.append(v)
+                i += 1
         return out, count
     return node, 0
 
@@ -303,6 +333,18 @@ def scan_all_assets(user_home, custom_ws=None, include_secrets=False, include_bu
         kept = []
         for sub in dirs:
             full = Path(root) / sub
+            if full.is_symlink():
+                try:
+                    target_res = full.resolve()
+                    if ws_dir:
+                        try:
+                            target_res.relative_to(ws_dir.resolve())
+                        except ValueError:
+                            assets["skipped"].append((full, "external symlink (not followed)"))
+                            continue
+                except (OSError, RuntimeError):
+                    assets["skipped"].append((full, "unresolvable symlink"))
+                    continue
             if sub in EXCLUDED_DIRS:
                 if sub in (".venv", "venv") and (full / "pyvenv.cfg").is_file():
                     assets["venvs"].append(full)

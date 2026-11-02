@@ -171,14 +171,16 @@ def write_package(staging_dir, manifest_doc, packages_dir, stem,
     if total <= budget:
         manifest_doc["long_paths"] = long_path_report(list(file_manifest) + [MANIFEST_NAME])
         zip_path = packages_dir / f"{unique_stem(packages_dir, stem)}.zip"
+        tmp_zip = zip_path.with_suffix(".zip.tmp")
         (staging_dir / MANIFEST_NAME).write_text(
             json.dumps(manifest_doc, indent=2, ensure_ascii=False), encoding="utf-8")
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
+        with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
             for root, _, files in os.walk(staging_dir):
                 for name in files:
                     path = Path(root) / name
                     zipf.write(path, arcname=path.relative_to(staging_dir).as_posix())
-        _verify_written(zip_path, list(file_manifest), max_part_bytes)
+        _verify_written(tmp_zip, list(file_manifest), max_part_bytes)
+        os.replace(tmp_zip, zip_path)
         if private:
             _chmod_private(zip_path)
         return [zip_path]
@@ -231,7 +233,8 @@ def write_package(staging_dir, manifest_doc, packages_dir, stem,
             "chunked_files": chunked_files,
         }
         zip_path = packages_dir / names[index - 1]
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
+        tmp_zip = zip_path.with_suffix(".zip.tmp")
+        with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
             for kind, rel, offset, length in part:
                 if kind == "file":
                     zipf.write(staging_dir / rel, arcname=rel)
@@ -247,7 +250,8 @@ def write_package(staging_dir, manifest_doc, packages_dir, stem,
                         dst.write(block)
                         left -= len(block)
             zipf.writestr(MANIFEST_NAME, json.dumps(doc, indent=2, ensure_ascii=False))
-        _verify_written(zip_path, list(slice_), max_part_bytes)
+        _verify_written(tmp_zip, list(slice_), max_part_bytes)
+        os.replace(tmp_zip, zip_path)
         if private:
             _chmod_private(zip_path)
         written.append(zip_path)

@@ -11,6 +11,7 @@ The packer only COPIES from the source machine. It never modifies or deletes ori
 
 import sys
 import shutil
+import uuid
 import platform
 from datetime import datetime
 from pathlib import Path
@@ -62,11 +63,12 @@ def run_pack(assets, output_base, user_home, include_level5=False, encrypted=Fal
     include_secrets = assets["include_secrets"]
     now = datetime.now()
     ts_str = now.strftime("%Y%m%d_%H%M%S")
-    tracking_id = f"PKG-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+    pkg_uuid = uuid.uuid4().hex[:8]
+    tracking_id = f"PKG-{now.strftime('%Y%m%d-%H%M%S')}-{pkg_uuid}"
 
     packages_dir = output_base / "packages"
     packages_dir.mkdir(parents=True, exist_ok=True)
-    staging_dir = output_base / f"_staging_{ts_str}"
+    staging_dir = output_base / f"_staging_{ts_str}_{pkg_uuid}"
     if staging_dir.exists():
         shutil.rmtree(win_p(staging_dir), ignore_errors=True)
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -82,9 +84,13 @@ def run_pack(assets, output_base, user_home, include_level5=False, encrypted=Fal
         skills_base = user_home / ".gemini" / "config" / "skills"
         mcp_dir = user_home / ".gemini" / "antigravity" / "mcp"
 
-        # Level_1 agent directives
+        # Level_1 agent directives (REL-01: preserve nested relative paths)
         for fp in assets["Level_1_Agent_Directives"]:
-            _copy(fp, staging_dir / LEVELS[0] / fp.name, staging_dir, 1, file_manifest)
+            try:
+                rel_to_ws = fp.relative_to(ws_base)
+            except (ValueError, AttributeError):
+                rel_to_ws = Path(fp.name)
+            _copy(fp, staging_dir / LEVELS[0] / rel_to_ws, staging_dir, 1, file_manifest)
             level_counts[LEVELS[0]] += 1
 
         # Level_2 MCP definitions: secret values are replaced unless the user opted in

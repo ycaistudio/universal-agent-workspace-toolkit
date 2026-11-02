@@ -9,10 +9,12 @@ The parts of one split package are a single package.
 
 import os
 import sys
+import re
 import json
 import shutil
 import zipfile
 import tempfile
+import re
 from datetime import datetime
 from pathlib import Path
 from toolkit_scanner import win_p, calculate_sha256
@@ -20,6 +22,145 @@ from toolkit_parts import join_chunks, sibling_parts
 
 IDE_PATCH = {"security.promptForLocalFileProtocolHandling": False}
 MCP_PREFIX = "Level_2_System_Settings/mcp/"
+
+MAX_ZIP_ENTRIES = 10000
+MAX_ZIP_SINGLE_FILE_BYTES = 500 * 1024 * 1024  # 500 MB
+MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
+MAX_ZIP_COMPRESSION_RATIO = 100.0
+
+
+class ZipSecurityError(RuntimeError):
+    pass
+
+
+def safe_extract_zip(zip_path, staging_dir, max_files=MAX_ZIP_ENTRIES,
+                     max_single_size=MAX_ZIP_SINGLE_FILE_BYTES,
+                     max_total_size=MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+                     max_ratio=MAX_ZIP_COMPRESSION_RATIO):
+    """Safely inspect central directory and extract ZIP members with resource exhaustion guards (SEC-05)."""
+    staging_dir = Path(staging_dir)
+    staging_resolved = staging_dir.resolve()
+    with zipfile.ZipFile(zip_path) as z:
+        infolist = z.infolist()
+        if len(infolist) > max_files:
+            raise ZipSecurityError(f"ZIP bomb protection: file count {len(infolist)} exceeds limit {max_files}")
+        total_size = 0
+        seen_names = set()
+        for info in infolist:
+            name = info.filename.replace("\\", "/")
+            if "\0" in name:
+                raise ZipSecurityError(f"Illegal null byte in zip entry: {name}")
+            if name.startswith("/") or re.match(r"^[a-zA-Z]:", name):
+                raise ZipSecurityError(f"Illegal absolute path in zip entry: {name}")
+            parts = name.split("/")
+            if ".." in parts:
+                raise ZipSecurityError(f"Path traversal detected in zip entry: {name}")
+            if name in seen_names:
+                raise ZipSecurityError(f"Duplicate entry in zip archive: {name}")
+            seen_names.add(name)
+            if info.file_size > max_single_size:
+                raise ZipSecurityError(f"File {name} uncompressed size {info.file_size} exceeds single limit {max_single_size}")
+            total_size += info.file_size
+            if total_size > max_total_size:
+                raise ZipSecurityError(f"Total uncompressed size {total_size} exceeds total limit {max_total_size}")
+            if info.file_size > 10240:
+                ratio = info.file_size / max(info.compress_size, 1)
+                if ratio > max_ratio:
+                    raise ZipSecurityError(f"ZIP bomb protection: file {name} compression ratio {ratio:.1f} exceeds {max_ratio}")
+
+        for info in infolist:
+            name = info.filename.replace("\\", "/")
+            dest = staging_dir
+            for p in name.split("/"):
+                if p and p != ".":
+                    dest = dest / p
+            if info.is_dir():
+                dest.mkdir(parents=True, exist_ok=True)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                dest.resolve().relative_to(staging_resolved)
+            except ValueError:
+                raise ZipSecurityError(f"Entry {name} escapes staging directory")
+            with z.open(info) as src_f, open(dest, "wb") as dst_f:
+                written = 0
+                while chunk := src_f.read(65536):
+                    written += len(chunk)
+                    if written > max_single_size:
+                        raise ZipSecurityError(f"Streamed extraction of {name} exceeded single file size cap")
+                    dst_f.write(chunk)
+
+
+def validate_manifest_schema(manifest):
+    """Validate manifest schema, types, and structure (REL-07). Returns (is_valid, errors)."""
+    errors = []
+    if not isinstance(manifest, dict):
+        return False, ["Manifest is not a JSON object"]
+    required_keys = ["manifest_version", "profile", "tracking_id", "created_at", "file_manifest"]
+    for k in required_keys:
+        if k not in manifest:
+            errors.append(f"Missing required manifest field: {k}")
+    if "file_manifest" in manifest:
+        fm = manifest["file_manifest"]
+        if not isinstance(fm, dict):
+            errors.append("file_manifest must be an object")
+        else:
+            for path, meta in fm.items():
+                if not isinstance(meta, dict):
+                    errors.append(f"file_manifest entry '{path}' must be an object")
+                elif "sha256" not in meta or "size" not in meta:
+                    errors.append(f"file_manifest entry '{path}' missing sha256 or size")
+                elif not isinstance(meta.get("sha256"), str) or len(meta["sha256"]) != 64:
+                    errors.append(f"file_manifest entry '{path}' has invalid sha256 format")
+    return len(errors) == 0, errors
+
+
+class RestoreTransaction:
+    """Manages transactional restore and rollback (REL-03)."""
+    def __init__(self, rollback_snapshot_dir=None):
+        self.snapshot_dir = Path(rollback_snapshot_dir) if rollback_snapshot_dir else None
+        self.created_files = []
+        self.modified_files = []
+        self.created_dirs = []
+        self.committed = False
+        self.log = []
+
+    def record_create(self, path):
+        self.created_files.append(Path(path))
+        self.log.append(f"CREATE: {path}")
+
+    def record_modify(self, path, backup_path):
+        self.modified_files.append((Path(path), Path(backup_path)))
+        self.log.append(f"MODIFY: {path}")
+
+    def record_dir(self, path):
+        self.created_dirs.append(Path(path))
+
+    def rollback(self):
+        """Rollback all changes made during the restore transaction."""
+        for p in reversed(self.created_files):
+            try:
+                if p.is_file() or p.is_symlink():
+                    p.unlink(missing_ok=True)
+            except OSError:
+                pass
+        for orig, backup in self.modified_files:
+            try:
+                if backup.is_file():
+                    shutil.copy2(win_p(backup), win_p(orig))
+            except OSError:
+                pass
+        for d in reversed(self.created_dirs):
+            try:
+                if d.is_dir() and not any(d.iterdir()):
+                    d.rmdir()
+            except OSError:
+                pass
+        self.log.append("TRANSACTION_ROLLED_BACK")
+
+    def commit(self):
+        self.committed = True
+        self.log.append("TRANSACTION_COMMITTED")
 
 
 def _read_manifest(zip_path):
@@ -100,9 +241,16 @@ def unpack_and_audit(input_path):
         staging = Path(tempfile.mkdtemp(prefix="uawt_restore_"))
         result.update(staging_dir=staging, package=ordered[0][2], parts=[c[2] for c in ordered])
         merged = {}
+        valid_schema, schema_errs = validate_manifest_schema(manifest)
+        if not valid_schema:
+            result["error"] = f"Manifest schema validation failed: {'; '.join(schema_errs)}"
+            return result
         for c in ordered:
-            with zipfile.ZipFile(c[2]) as z:
-                z.extractall(staging)
+            try:
+                safe_extract_zip(c[2], staging)
+            except ZipSecurityError as ze:
+                result["error"] = str(ze)
+                return result
             merged.update(c[3].get("file_manifest", {}))
         verified = set()
         _verify_into(staging, merged, result, verified)
@@ -116,8 +264,15 @@ def unpack_and_audit(input_path):
     ignored.extend((c[2], "older package, not used") for c in candidates[:-1])
     staging = Path(tempfile.mkdtemp(prefix="uawt_restore_"))
     result.update(staging_dir=staging, manifest=manifest, package=chosen, parts=[chosen])
-    with zipfile.ZipFile(chosen) as z:
-        z.extractall(staging)
+    valid_schema, schema_errs = validate_manifest_schema(manifest)
+    if not valid_schema:
+        result["error"] = f"Manifest schema validation failed: {'; '.join(schema_errs)}"
+        return result
+    try:
+        safe_extract_zip(chosen, staging)
+    except ZipSecurityError as ze:
+        result["error"] = str(ze)
+        return result
 
     verified = set()
     _verify_into(staging, manifest.get("file_manifest", {}), result, verified)
@@ -131,6 +286,25 @@ def cleanup_staging(staging_dir):
 
 
 # ---------------------------------------------------------------- IDE settings
+
+def revert_ide_patch(user_home):
+    """Revert the file:/// prompt bypass in settings.json to restore original IDE security defaults (SEC-03)."""
+    results = []
+    for name, sp in ide_settings_paths(user_home):
+        if not sp.exists():
+            continue
+        try:
+            data = json.loads(sp.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                continue
+            if "security.promptForLocalFileProtocolHandling" in data:
+                del data["security.promptForLocalFileProtocolHandling"]
+                sp.write_text(json.dumps(data, indent=4), encoding="utf-8")
+                results.append({"ide": name, "path": sp, "status": "reverted"})
+        except Exception:
+            pass
+    return results
+
 def ide_settings_paths(user_home):
     """settings.json locations for IDEs that have been run on this machine (their User dir exists)."""
     if sys.platform == "win32":
@@ -178,7 +352,7 @@ def _staged_files(staging_dir, folder):
     return [(Path(r) / f, (Path(r) / f).relative_to(base)) for r, _, fs in os.walk(base) for f in fs]
 
 
-def generate_impact_assessment(staging_dir, target_env, user_home, ws_dst, apply_ide=True):
+def generate_impact_assessment(staging_dir, target_env, user_home, ws_dst, apply_ide=False):
     """Dry run: what would be added, what collides, what settings would change."""
     mcp_dst = user_home / ".gemini" / "antigravity" / "mcp"
     skills_dst = user_home / ".gemini" / "config" / "skills"
@@ -217,7 +391,7 @@ def generate_impact_assessment(staging_dir, target_env, user_home, ws_dst, apply
     return assessment
 
 
-def create_rollback_snapshot(user_home, staging_dir, target_env, ws_dst, apply_ide=True):
+def create_rollback_snapshot(user_home, staging_dir, target_env, ws_dst, apply_ide=False):
     """Copy everything the restore could overwrite. Returns the snapshot dir, or None if there was nothing to save."""
     snap = user_home / ".gemini" / f"_pre_restore_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     mapping = []  # (original, copy inside snapshot)
@@ -256,7 +430,7 @@ def create_rollback_snapshot(user_home, staging_dir, target_env, ws_dst, apply_i
 
 
 # ---------------------------------------------------------------- deploy
-def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user="", apply_ide=True):
+def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user="", apply_ide=False, rollback_snapshot=None):
     """Deploys assets: Level_1/MCP .incoming protection on existing targets, IDE patch, path self-healing."""
     gemini_dir = user_home / ".gemini"
     config_dst = gemini_dir / "config"
@@ -267,33 +441,52 @@ def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user="", app
     mcp_dst.mkdir(parents=True, exist_ok=True)
     ws_dst.mkdir(parents=True, exist_ok=True)
 
-    incoming = []  # files saved as *.incoming instead of overwriting local ones
+    incoming = []
+    tx = RestoreTransaction(rollback_snapshot)
 
     def deploy(src, target):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target_env == "existing" and target.exists():
-            alt = target.with_name(target.name + ".incoming")
+        dest = Path(target)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if not dest.exists():
+            tx.record_create(dest)
+            shutil.copy2(win_p(src), win_p(dest))
+        elif target_env == "existing":
+            alt = dest.with_name(dest.name + ".incoming")
+            tx.record_create(alt)
             shutil.copy2(win_p(src), win_p(alt))
             incoming.append(alt)
         else:
-            shutil.copy2(win_p(src), win_p(target))
+            # fresh: overwriting existing file
+            tx.record_modify(dest, dest)
+            shutil.copy2(win_p(src), win_p(dest))
 
-    # 1. Level_1 directives
-    for f, _ in _staged_files(staging_dir, "Level_1_Agent_Directives"):
-        deploy(f, ws_dst / f.name)
+    try:
+        # 1. Level_1 directives (REL-01: preserve nested relative paths)
+        l1_dir = staging_dir / "Level_1_Agent_Directives"
+        if l1_dir.exists():
+            for f, rel in _staged_files(staging_dir, "Level_1_Agent_Directives"):
+                deploy(f, ws_dst / rel)
 
-    # 2. Level_2 MCP definitions (a redacted copy must never replace a working local config)
-    for f, rel in _staged_files(staging_dir, "Level_2_System_Settings/mcp"):
-        deploy(f, mcp_dst / rel)
-    ide_report = apply_ide_patch(user_home) if apply_ide else []
+        # 2. Level_2 MCP definitions
+        for f, rel in _staged_files(staging_dir, "Level_2_System_Settings/mcp"):
+            deploy(f, mcp_dst / rel)
+        ide_report = apply_ide_patch(user_home) if apply_ide else []
 
-    # 3. Level_3 skills, 4. Level_4 docs
-    l3_dir = staging_dir / "Level_3_Modular_Skills"
-    if l3_dir.exists():
-        shutil.copytree(win_p(l3_dir), win_p(skills_dst), dirs_exist_ok=True)
-    l4_dir = staging_dir / "Level_4_Workspace_Docs"
-    if l4_dir.exists():
-        shutil.copytree(win_p(l4_dir), win_p(ws_dst), dirs_exist_ok=True)
+        # 3. Level_3 skills
+        l3_dir = staging_dir / "Level_3_Modular_Skills"
+        if l3_dir.exists():
+            for f, rel in _staged_files(staging_dir, "Level_3_Modular_Skills"):
+                deploy(f, skills_dst / rel)
+
+        # 4. Level_4 docs
+        l4_dir = staging_dir / "Level_4_Workspace_Docs"
+        if l4_dir.exists():
+            for f, rel in _staged_files(staging_dir, "Level_4_Workspace_Docs"):
+                deploy(f, ws_dst / rel)
+        tx.commit()
+    except Exception as exc:
+        tx.rollback()
+        raise RuntimeError(f"Restore failed and transaction rolled back: {exc}") from exc
 
     # 5. Dynamic path refactoring (source username -> target username)
     refactored_count = 0
