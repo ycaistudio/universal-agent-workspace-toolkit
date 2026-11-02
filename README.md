@@ -178,7 +178,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 Pack writes `./migration_output` unless `--output-dir` is set. Restore reads `./migration_output` unless `--input-dir` is set. If that path is missing, restore uses the current directory.
 
-**Limitations.** `tests/test_grok_profile.py` uses a synthetic directory. A read-only pack on one Grok Bot host is what surfaced the virtualenv, `store.db`, and per-folder warning fixes; restore has not been run on that host. `/cursor/stores` is experimental and was not checked against a live Pages layout. Restore does not write Pages, `/cursor/stores`, or a live `store.db`. `--encrypt` stays off unless the flag is set. The HMAC checks the ciphertext before decrypt. After decrypt, each extracted file is checked against the SHA-256 stored in the manifest. Split kits and venv locks (v2.3.0) are covered by `tests/test_hardening_v230.py` on synthetic trees only; a real multi-GB kit has not been split and restored on a second machine yet.
+**Limitations.** The Grok Bot profile was built against a synthetic directory. A read-only pack on one Grok Bot host is what surfaced the virtualenv, `store.db`, and per-folder warning fixes; restore has not been run on that host. `/cursor/stores` is experimental and was not checked against a live Pages layout. Restore does not write Pages, `/cursor/stores`, or a live `store.db`. `--encrypt` stays off unless the flag is set. The HMAC checks the ciphertext before decrypt. After decrypt, each extracted file is checked against the SHA-256 stored in the manifest. Split kits and venv locks (v2.3.0) were checked on synthetic trees only; a real multi-GB kit has not been split and restored on a second machine yet.
 
 ### 🇹🇼 繁體中文
 
@@ -232,7 +232,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 未指定 `--output-dir` 時，打包寫入 `./migration_output`。未指定 `--input-dir` 時，還原讀取 `./migration_output`。該路徑不存在時，還原改用目前目錄。
 
-**限制。** `tests/test_grok_profile.py` 用的是合成目錄。有一次在 Grok Bot 主機上做過唯讀打包，因而發現虛擬環境、`store.db` 與警告清單過大的問題；該主機上還沒有執行還原。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages、`/cursor/stores` 或正在使用的 `store.db`。`--encrypt` 沒有旗標就保持關閉。HMAC 會在解密前檢查密文。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。分件封裝與虛擬環境鎖定檔（v2.3.0）只由 `tests/test_hardening_v230.py` 以合成目錄測試；尚未在第二部電腦上拆分並還原真正數 GB 的封裝。
+**限制。** Grok Bot 設定檔以合成目錄開發。有一次在 Grok Bot 主機上做過唯讀打包，因而發現虛擬環境、`store.db` 與警告清單過大的問題；該主機上還沒有執行還原。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages、`/cursor/stores` 或正在使用的 `store.db`。`--encrypt` 沒有旗標就保持關閉。HMAC 會在解密前檢查密文。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。分件封裝與虛擬環境鎖定檔（v2.3.0）只在合成目錄上檢查過；尚未在第二部電腦上拆分並還原真正數 GB 的封裝。
 
 ### 🇯🇵 日本語
 
@@ -286,7 +286,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 `--output-dir` が無いとき、パックは `./migration_output` に書きます。`--input-dir` が無いとき、復元は `./migration_output` を読みます。そのパスが無いときは、復元はカレントディレクトリを使います。
 
-**制限。** `tests/test_grok_profile.py` は合成ディレクトリです。Grok Bot ホストで読み取り専用のパックを一度実行し、仮想環境、`store.db`、警告一覧の大きさが見つかりました。そのホストでは復元は未実行です。`/cursor/stores` は実験的で、live の Pages 配置とは照合していません。復元は Pages、`/cursor/stores`、稼働中の `store.db` を書きません。`--encrypt` はフラグが無い限りオフです。HMAC は復号の前に暗号文を確認します。復号に成功したあと、展開した各ファイルをマニフェストの SHA-256 と照合します。分割キットと仮想環境ロック（v2.3.0）は `tests/test_hardening_v230.py` の合成ツリーでのみテストしています。実際の数 GB のキットを分割して別のマシンで復元したことはまだありません。
+**制限。** Grok Bot プロファイルは合成ディレクトリで開発しています。Grok Bot ホストで読み取り専用のパックを一度実行し、仮想環境、`store.db`、警告一覧の大きさが見つかりました。そのホストでは復元は未実行です。`/cursor/stores` は実験的で、live の Pages 配置とは照合していません。復元は Pages、`/cursor/stores`、稼働中の `store.db` を書きません。`--encrypt` はフラグが無い限りオフです。HMAC は復号の前に暗号文を確認します。復号に成功したあと、展開した各ファイルをマニフェストの SHA-256 と照合します。分割キットと仮想環境ロック（v2.3.0）は合成ツリーでのみ確認しています。実際の数 GB のキットを分割して別のマシンで復元したことはまだありません。
 
 ---
 
@@ -556,7 +556,6 @@ universal-agent-workspace-toolkit/
 ├── toolkit_crypto.py             # Optional --encrypt: AES-256-CBC plus HMAC-SHA256 (off by default)
 ├── toolkit_parts.py              # Part cap, standalone _Part_NN_of_MM.zip, re-join, long paths, _v2 naming
 ├── toolkit_preflight.py          # Offline venv requirement locks, duplicate skill/rules detection
-├── tests/                        # Synthetic Grok box + Antigravity regression + v2.3.0 hardening
 ├── CHANGELOG.md                  # Release notes
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
@@ -576,21 +575,21 @@ universal-agent-workspace-toolkit/
 * **IDE settings**: restore adds `"security.promptForLocalFileProtocolHandling": false` to the settings of IDEs already installed on the target (pass `--skip-ide-protocol-patch` to disable). Files that are not plain JSON (for example VS Code settings with comments) are never edited; the line to add is printed instead. A backup `settings.json.bak-<time>` is made before any edit.
 * **Level 5** heavy media is counted in the audit but not packed.
 * **Part cap (v2.3.0)**: no zip is larger than `--max-part-mb` (default 90, max 95 decimal MB). Larger kits become standalone `_Part_NN_of_MM.zip` files; keep them in one folder. Existing outputs are never overwritten (`_v2`, `_v3`, ...).
-* **Status**: verified on the Google Antigravity directory layout. The Grok Bot profile is covered by `tests/test_grok_profile.py` on a synthetic box. A read-only pack was also run on one Grok Bot host; restore has not been run there. `/cursor/stores` listing is experimental. Other agents are untested. Automated tests were run on Linux only.
+* **Status**: verified on the Google Antigravity directory layout. The Grok Bot profile was checked on a synthetic box. A read-only pack was also run on one Grok Bot host; restore has not been run there. `/cursor/stores` listing is experimental. Other agents are untested.
 
 * **機密**：預設不打包已知憑證檔案、私鑰區塊與真實格式的 API Token，MCP 機密值以 `__REDACTED_RESTORE_MANUALLY__` 取代；加上 `--include-secrets` 即可一併帶走。所有排除與遮蔽項目都列在封裝報告與 `package_manifest.json`。封裝檔完成後的保管由使用者負責。
 * **還原**：只使用找到的最新封裝（依 `created_at`），解壓到每次全新的暫存資料夾並於結束後刪除；不論是否加 `-y`，都會先為可能被覆寫的內容建立還原快照。同名技能檔案與工作區文件會被覆寫；`existing` 模式下 `AGENTS.md` 與 MCP 設定保留，封裝版本另存為 `.incoming`。
 * **IDE 設定**：還原時會在目標電腦已安裝的 IDE 設定中加入 `"security.promptForLocalFileProtocolHandling": false`（可用 `--skip-ide-protocol-patch` 關閉）。不是純 JSON 的檔案（例如含註解的 VS Code 設定）不會被修改，只會印出要手動加入的行；修改前會先備份為 `settings.json.bak-<時間>`。
 * **Level 5** 大檔只在審計表計數，不打包。
 * **每份上限（v2.3.0）**：每個 ZIP 不超過 `--max-part-mb`（預設 90，十進位上限 95）。更大的封裝會變成可獨立開啟的 `_Part_NN_of_MM.zip`，請放在同一資料夾。已存在的輸出不會被覆寫（改用 `_v2`、`_v3`……）。
-* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔由 `tests/test_grok_profile.py` 以合成目錄測試。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
+* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔以合成目錄檢查過。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試。
 
 * **機密情報**：既定では既知の認証情報ファイル、秘密鍵ブロック、実在形式の API トークンは梱包されず、MCP の機密値は `__REDACTED_RESTORE_MANUALLY__` に置換されます。`--include-secrets` を付けると含められます。除外・置換した項目は、パック時のレポートと `package_manifest.json` に一覧表示されます。作成後のパッケージの管理はユーザーの責任です。
 * **復元**：見つかった最新のパッケージ（`created_at` 基準）のみを使い、毎回新しい一時フォルダーに展開して終了後に削除します。`-y` の有無にかかわらず、上書きされる可能性のある内容のスナップショットを必ず作成します。同名のスキルファイルとワークスペース文書は上書きされ、`existing` モードでは `AGENTS.md` と MCP 設定が保持され、新しい版は `.incoming` として保存されます。
 * **IDE 設定**：復元時、移行先にインストール済みの IDE の設定に `"security.promptForLocalFileProtocolHandling": false` を追加します（`--skip-ide-protocol-patch` で無効化）。通常の JSON でないファイル（コメント付きの VS Code 設定など）は編集せず、追加すべき行を表示します。編集前に `settings.json.bak-<時刻>` としてバックアップします。
 * **Level 5** の大容量メディアは監査表に件数のみ表示し、梱包しません。
 * **1 ファイルの上限（v2.3.0）**：どの ZIP も `--max-part-mb`（既定 90、10 進の上限 95）を超えません。大きいキットは単独で開ける `_Part_NN_of_MM.zip` になるので、同じフォルダに置いてください。既存の出力は上書きしません（`_v2`、`_v3` …）。
-* **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは `tests/test_grok_profile.py` の合成ツリーでテストしています。Grok Bot ホストで読み取り専用のパックも一度実行済みで、そのホストでの復元は未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証で、自動テストは Linux のみで実行しています。
+* **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは合成ツリーで確認しています。Grok Bot ホストで読み取り専用のパックも一度実行済みで、そのホストでの復元は未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証です。
 
 ## License
 

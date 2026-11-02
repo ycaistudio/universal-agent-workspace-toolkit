@@ -2,7 +2,7 @@
 
 ## v2.3.0
 
-Backup hardening for large kits. The default Grok Bot paths, the CLI, and the single-zip output for small kits are unchanged. Run `python3 -m unittest discover -s tests` to check.
+Backup hardening for large kits. The default Grok Bot paths, the CLI, and the single-zip output for small kits are unchanged.
 
 ### Added
 
@@ -15,12 +15,12 @@ Backup hardening for large kits. The default Grok Bot paths, the CLI, and the si
 - No-overwrite output naming: `_v2`, `_v3`, ...
 - `--include-bulky`, which is the same as `INCLUDE_BULKY_DIRS=1`. Without it, model weights of 5 MB or more (`.onnx`, `.pt`, `.pth`, `.ckpt`, `.safetensors`, `.gguf`, `.bin`) go to Level 5 and are not packed.
 - MIT `LICENSE` file, linked from the three READMEs.
-- New modules `toolkit_parts.py` and `toolkit_preflight.py`, and the new test file `tests/test_hardening_v230.py`.
+- New modules `toolkit_parts.py` and `toolkit_preflight.py`.
 
 ### Changed (behaviour that existing users can notice)
 
 - Kits above 90 MB are now split into parts instead of one large zip.
-- Files matched by the broader name rules are excluded unless `--include-secrets` is set. This includes nested `*secret*.json` files, `*.pem` and `*.key`, and `credentials/` folders. `tests/test_grok_profile.py` was updated for one nested `custom-secrets.json` that v2.2.0 packed.
+- Files matched by the broader name rules are excluded unless `--include-secrets` is set. This includes nested `*secret*.json` files, `*.pem` and `*.key`, and `credentials/` folders. A nested `custom-secrets.json` that v2.2.0 packed is now excluded.
 - Antigravity profile: `*venv*` folders, `pyvenv.cfg` folders and `site-packages` are no longer packed. Requirement locks are written instead.
 - Model weights of 5 MB or more go to Level 5 unless `--include-bulky` is set.
 - `--encrypt` refuses to replace an existing `.zip.enc`. Previously, an existing `.zip.enc` with the same name could be overwritten.
