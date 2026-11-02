@@ -10,6 +10,19 @@
 
 ---
 
+---
+
+## ⚠️ 免責聲明與環境適配提醒 (Disclaimer & Environment Notice)
+
+> [!WARNING]
+> **資料隱私、使用者責任與不同 AI Agent 協同提醒**
+> 
+> - **本工具開發初衷**：我製作這個工具的初衷，純粹是希望為大家提供一個更簡單、便利且標準化的方式，來備份與還原 AI Agent 的工作區及各項設定檔。
+> - **適用環境基準**：目前的各項設定、預設路徑與映射邏輯，主要是**根據我個人現時主要使用的 AI Agent（Google Antigravity 與 Grok Bot）的設定環境去量身製作**。若您使用其他 AI Agent（例如 Cursor、Claude Code、VS Code / Cline / Roo 等），**在使用前需要先與該 AI Agent 深入討論，確認如何針對其特定的目錄結構與需求來配合調整使用**。
+> - **使用者自行保管與保密全責**：使用本工具打包生成的備份檔案中，可能包含您個人的私人資料、敏感資訊、專案核心原始碼或本機環境配置。**使用者必須自行全權負責妥善保管、加密與保密所有備份檔案**。處理敏感資產時，強烈建議啟用內建加密功能（`--encrypt`）。
+> - **免責與責任限制**：作者及貢獻者**概不承擔任何責任**。若因使用本工具、檔案保管不當、未加密傳輸或任何意外而導致資料遺失、敏感資訊外洩、資安漏洞或任何損壞，所有後果與責任均由使用者自行承擔。
+
+
 ## 🇹🇼 繁體中文說明
 
 **Universal AI Agent 工作區全域管理中樞** 支援 **Google Antigravity**、**Claude Code / Desktop**、**Cursor**、**VS Code (Cline / Roo)** 與 **Grok Bot**，可在 Windows / macOS / Linux 上做快照備份與還原。Grok Bot 是獨立設定檔，說明見下方專節。
@@ -99,8 +112,8 @@
 * 名為 `sand-subagent-*` 的目錄，除非 `--include-subagents` 或 `INCLUDE_SUBAGENTS=1`。
 * `/cursor/stores` 的檔案內容，除非 `--include-cursor-stores`。沒有這個旗標時，清單只記錄名稱。
 * 符號連結。打包時不跟隨。
-* 內含 `pyvenv.cfg` 的目錄，以及名為 `site-packages` 的目錄。`node_modules` 仍然排除。`INCLUDE_BULKY_DIRS=1` 不會把它們加回來。其套件清單會離線匯出到 `Level_2_System_Settings/python-envs/`（見 v2.3.0 一節）。
-* `credentials/` 資料夾與 v2.3.0 檔名規則（`*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`*.pem`、`*.key`），除非加上 `--include-secrets`。
+* 內含 `pyvenv.cfg` 的目錄，以及名為 `site-packages` 的目錄。`node_modules` 仍然排除。`INCLUDE_BULKY_DIRS=1` 不會把它們加回來。其套件清單會離線匯出到 `Level_2_System_Settings/python-envs/`（見「大型封裝與打包前檢查」一節）。
+* `credentials/` 資料夾與 打包預檢檔名規則（`*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`*.pem`、`*.key`），除非加上 `--include-secrets`。
 * `package-lock.json`、`tokenizer_config.json`、`tokenizer.json` 與打包程式裡的其他 lockfile 名稱會原樣複製，JSON 鍵值替換不會改寫它們。清單裡的密碼/Token 警告是每個資料夾、每種原因一列並附上數量，不是每個檔案一列。
 
 `--encrypt` 預設關閉，要加上旗標才會執行。它呼叫 OpenSSL `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt`，再為該密文存放 HMAC-SHA256（先加密再做 MAC；MAC 金鑰是 PBKDF2-HMAC-SHA256、200000 次、自有 salt）。密碼放在 `UAWT_ENCRYPT_PASSPHRASE` 或提示輸入，不接受命令列參數。系統 `PATH` 上要有 OpenSSL。成功時刪除明文 zip、留下 `*.zip.enc`（權限 `600`）。失敗時保留明文 zip 並以錯誤結束。密碼錯誤或密文被改過時，還原會在寫出任何解密檔之前停止。舊版直接寫出的 OpenSSL 密文（沒有 `UAWTENC1` 標頭）會被拒絕，需要用這個版本重新打包。
@@ -133,7 +146,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 ---
 
-### 大型封裝與打包前檢查（v2.3.0）
+### 大型封裝與打包前檢查
 
 兩種設定檔都適用。
 
@@ -271,9 +284,9 @@ universal-agent-workspace-toolkit/
 
 * **機密**：預設不打包已知憑證檔案、私鑰區塊與真實格式的 API Token，MCP 機密值以 `__REDACTED_RESTORE_MANUALLY__` 取代；加上 `--include-secrets` 即可一併帶走。所有排除與遮蔽項目都列在封裝報告與 `package_manifest.json`。封裝檔完成後的保管由使用者負責。
 * **還原**：只使用找到的最新封裝（依 `created_at`），解壓到每次全新的暫存資料夾並於結束後刪除；不論是否加 `-y`，都會先為可能被覆寫的內容建立還原快照。同名技能檔案與工作區文件會被覆寫；`existing` 模式下 `AGENTS.md` 與 MCP 設定保留，封裝版本另存為 `.incoming`。
-* **IDE 設定**：還原時會在目標電腦已安裝的 IDE 設定中加入 `"security.promptForLocalFileProtocolHandling": false`（可用 `--skip-ide-protocol-patch` 關閉）。不是純 JSON 的檔案（例如含註解的 VS Code 設定）不會被修改，只會印出要手動加入的行；修改前會先備份為 `settings.json.bak-<時間>`。
+* **IDE 設定**：預設完整保留使用者原有安全設定。僅在顯式傳入 `--enable-ide-prompt-bypass` 時，才會在目標電腦已安裝的 IDE 設定中加入 `"security.promptForLocalFileProtocolHandling": false`。修改前會先備份為 `settings.json.bak-<時間>`，並支援還原復原。
 * **Level 5** 大檔只在審計表計數，不打包。
-* **每份上限（v2.3.0）**：每個 ZIP 不超過 `--max-part-mb`（預設 90，十進位上限 95）。更大的封裝會變成可獨立開啟的 `_Part_NN_of_MM.zip`，請放在同一資料夾。已存在的輸出不會被覆寫（改用 `_v2`、`_v3`……）。
+* **每份上限**：每個 ZIP 不超過 `--max-part-mb`（預設 90，十進位上限 95）。更大的封裝會變成可獨立開啟的 `_Part_NN_of_MM.zip`，請放在同一資料夾。已存在的輸出不會被覆寫（改用 `_v2`、`_v3`……）。
 * **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔以合成目錄檢查過。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試。
 
 

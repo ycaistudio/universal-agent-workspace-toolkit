@@ -10,6 +10,19 @@ Google Antigravity、Claude Code、Cursor、VS Code（Cline / Roo）、**Grok Bo
 
 ---
 
+---
+
+## ⚠️ 免責事項および利用環境に関する留意事項 (Disclaimer & Environment Notice)
+
+> [!WARNING]
+> **データプライバシー、利用者の自己責任および他エージェントとの協調について**
+> 
+> - **本ツールの開発趣旨**：本ツールは、利用者の皆様が AI エージェントのワークスペースや各種設定ファイルを、より簡単かつ便利にバックアップ・復元できる手段を提供したいという思いから作成されました。
+> - **対象環境の基準**：現在の各種設定、既定のパスおよびマッピング構造は、**作者が現在主に使用している AI エージェント（Google Antigravity および Grok Bot）の利用環境に基づいて構築されています**。その他の AI エージェント（Cursor、Claude Code、VS Code / Cline / Roo など）でご利用になる場合は、**その AI エージェントと事前に相談し、ディレクトリ構成や要件に合わせてどのように連携・調整すべきかを確認した上でご使用ください**。
+> - **利用者の自己管理および機密保持責任**：本ツールで生成されたバックアップパッケージには、利用者の個人情報、機密データ、プロジェクトのソースコード、環境設定などが含まれる可能性があります。**生成されたすべてのバックアップファイルの適切な保管、暗号化、およびセキュリティ管理の責任は、すべて利用者自身が負うものとします**。機密資産を扱う際は、必ず内蔵の暗号化機能（`--encrypt`）をご活用ください。
+> - **責任の制限（免責）**：作者および貢献者は、本ツールの使用、不適切な保管、暗号化されていない転送、またはその他の事由により生じたいかなるデータ損失、機密情報の漏洩、セキュリティ事故、または直接的・間接的損害について、**一切の責任を負いません**。すべての責任と結果は利用者自身に帰屬します。
+
+
 ## 🇯🇵 日本語の概要
 
 **Universal AI Agent ワークスペース管理ハブ**は、**Google Antigravity**、**Claude Code**、**Cursor**、**VS Code (Cline / Roo)**、**Grok Bot** 向けのスナップショットと復元ツールです。Grok Bot は別プロファイルです。詳細は下の節にあります。
@@ -99,8 +112,8 @@ Google Antigravity、Claude Code、Cursor、VS Code（Cline / Roo）、**Grok Bo
 * 名前が `sand-subagent-*` のディレクトリ。`--include-subagents` または `INCLUDE_SUBAGENTS=1` のときだけ含めます。
 * `/cursor/stores` のファイル中身。`--include-cursor-stores` が無いときは、マニフェストに名前だけを記録します。
 * シンボリックリンク。辿りません。
-* `pyvenv.cfg` を含むディレクトリと、名前が `site-packages` のディレクトリ。`node_modules` も除外したままです。`INCLUDE_BULKY_DIRS=1` では戻りません。依存関係はオフラインで `Level_2_System_Settings/python-envs/` に書き出します（v2.3.0 の節）。
-* `credentials/` フォルダと v2.3.0 の名前ルール（`*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`*.pem`、`*.key`）。`--include-secrets` で含められます。
+* `pyvenv.cfg` を含むディレクトリと、名前が `site-packages` のディレクトリ。`node_modules` も除外したままです。`INCLUDE_BULKY_DIRS=1` では戻りません。依存関係はオフラインで `Level_2_System_Settings/python-envs/` に書き出します（「大きなキットとパック前チェック」の節）。
+* `credentials/` フォルダと パック前検査の名前ルール（`*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`*.pem`、`*.key`）。`--include-secrets` で含められます。
 * `package-lock.json`、`tokenizer_config.json`、`tokenizer.json`、およびパッカーが知る他の lockfile 名はそのままコピーします。JSON の鍵の置換はこれらを書き換えません。マニフェストのパスワード/トークン警告は、ファイルごとではなく、フォルダと理由ごとの件数です。
 
 `--encrypt` はフラグを付けたときだけ動きます。OpenSSL の `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt` を実行し、その暗号文の HMAC-SHA256 を保存します（encrypt-then-MAC。MAC 鍵は PBKDF2-HMAC-SHA256、200000 回、専用の salt）。パスフレーズは `UAWT_ENCRYPT_PASSPHRASE` かプロンプトで、引数では受け取りません。`PATH` 上に OpenSSL が必要です。成功すると平文 zip を消し、`*.zip.enc`（モード `600`）を残します。失敗すると平文 zip を残してエラーで終了します。パスフレーズが違う、または暗号文が変わっているときは、復号したファイルを書く前に復元を止めます。以前の版がそのまま書いた OpenSSL の暗号文（`UAWTENC1` ヘッダが無いもの）は拒否します。この版でパックし直してください。
@@ -133,7 +146,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 ---
 
-### 大きなキットとパック前チェック（v2.3.0）
+### 大きなキットとパック前チェック
 
 両方のプロファイルに適用されます。
 
@@ -271,9 +284,9 @@ universal-agent-workspace-toolkit/
 
 * **機密情報**：既定では既知の認証情報ファイル、秘密鍵ブロック、実在形式の API トークンは梱包されず、MCP の機密値は `__REDACTED_RESTORE_MANUALLY__` に置換されます。`--include-secrets` を付けると含められます。除外・置換した項目は、パック時のレポートと `package_manifest.json` に一覧表示されます。作成後のパッケージの管理はユーザーの責任です。
 * **復元**：見つかった最新のパッケージ（`created_at` 基準）のみを使い、毎回新しい一時フォルダーに展開して終了後に削除します。`-y` の有無にかかわらず、上書きされる可能性のある内容のスナップショットを必ず作成します。同名のスキルファイルとワークスペース文書は上書きされ、`existing` モードでは `AGENTS.md` と MCP 設定が保持され、新しい版は `.incoming` として保存されます。
-* **IDE 設定**：復元時、移行先にインストール済みの IDE の設定に `"security.promptForLocalFileProtocolHandling": false` を追加します（`--skip-ide-protocol-patch` で無効化）。通常の JSON でないファイル（コメント付きの VS Code 設定など）は編集せず、追加すべき行を表示します。編集前に `settings.json.bak-<時刻>` としてバックアップします。
+* **IDE 設定**：既定ではユーザーの元のセキュリティ設定を保持します。明示的に `--enable-ide-prompt-bypass` を指定した場合のみ、移行先にインストール済みの IDE 設定に `"security.promptForLocalFileProtocolHandling": false` を追加します。変更前に `settings.json.bak-<時刻>` としてバックアップされ、元に戻すことも可能です。
 * **Level 5** の大容量メディアは監査表に件数のみ表示し、梱包しません。
-* **1 ファイルの上限（v2.3.0）**：どの ZIP も `--max-part-mb`（既定 90、10 進の上限 95）を超えません。大きいキットは単独で開ける `_Part_NN_of_MM.zip` になるので、同じフォルダに置いてください。既存の出力は上書きしません（`_v2`、`_v3` …）。
+* **1 ファイルの上限**：どの ZIP も `--max-part-mb`（既定 90、10 進の上限 95）を超えません。大きいキットは単独で開ける `_Part_NN_of_MM.zip` になるので、同じフォルダに置いてください。既存の出力は上書きしません（`_v2`、`_v3` …）。
 * **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは合成ツリーで確認しています。Grok Bot ホストで読み取り専用のパックも一度実行済みで、そのホストでの復元は未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証です。
 
 ## ライセンス

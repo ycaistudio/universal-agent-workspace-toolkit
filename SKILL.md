@@ -1,10 +1,10 @@
 ---
 name: universal-agent-workspace-toolkit
 description: >-
-  通用 AI 智能體工作區全域管理中樞 (v2.3.0)。支援 Antigravity 與 Grok Bot 遷移、日常快照與還原，內建 Level_0 預設機密排除、Level_1~7 階梯對齊、衝擊評估與兩次確認門禁。觸發詞：workspace toolkit, 搬電腦, 備份, backup, restore, 系統遷移, grok bot.
+  通用 AI 智能體工作區全域管理中樞 。支援 Antigravity 與 Grok Bot 遷移、日常快照與還原，內建 Level_0 預設機密排除、Level_1~7 階梯對齊、衝擊評估與兩次確認門禁。觸發詞：workspace toolkit, 搬電腦, 備份, backup, restore, 系統遷移, grok bot.
 ---
 
-# Universal AI Agent Workspace Toolkit (v2.3.0 Master)
+# Universal AI Agent Workspace Toolkit
 
 ## 1. 🎯 核心定位與設計架構 (Core Architecture)
 
@@ -17,7 +17,7 @@ description: >-
 2. **Level_0 機密憑證排他守門機制**：
    - 主動探測 `.env`、API Key、Token、私鑰憑證具體儲存路徑；
    - 預設排除已知憑證檔案、私鑰區塊與真實格式 Token，MCP 機密值以佔位符取代；可用 `--include-secrets` 明確指定打包。
-   - v2.3.0 另依檔名排除（不開檔）：`*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`gateway.json`、`mcp_config.json`、`.env`、`*.pem`、`*.key` 與整個 `credentials/`；`.md`、`.py` 等文件不受檔名規則影響，`tokenizer*.json` 與 lockfile 保留。
+   - 打包預檢另依檔名排除（不開檔）：`*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`gateway.json`、`mcp_config.json`、`.env`、`*.pem`、`*.key` 與整個 `credentials/`；`.md`、`.py` 等文件不受檔名規則影響，`tokenizer*.json` 與 lockfile 保留。
 3. **全域 `Level_X` 命名與目錄對齊**：
    - 內部子目錄、壓縮檔名、Manifest 鍵名全數對齊：
      - `Level_1_Agent_Directives`（智能體首讀核心憲法 · ⚠️極高危，單例保護）
