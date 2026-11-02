@@ -14,6 +14,7 @@ Backup hardening for large kits. The default Grok Bot paths, the CLI, and the si
 - Long-path check. If the longest archive path is over 200 characters, the manifest records `long_paths` and the CLI advises extracting to `C:\GB\` or enabling `LongPathsEnabled`.
 - No-overwrite output naming: `_v2`, `_v3`, ...
 - `--include-bulky`, which is the same as `INCLUDE_BULKY_DIRS=1`. Without it, model weights of 5 MB or more (`.onnx`, `.pt`, `.pth`, `.ckpt`, `.safetensors`, `.gguf`, `.bin`) go to Level 5 and are not packed.
+- MIT `LICENSE` file, linked from the three READMEs.
 - New modules `toolkit_parts.py` and `toolkit_preflight.py`, and the new test file `tests/test_hardening_v230.py`.
 
 ### Changed (behaviour that existing users can notice)

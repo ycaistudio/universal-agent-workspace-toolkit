@@ -268,3 +268,7 @@ universal-agent-workspace-toolkit/
 * **Level 5** の大容量メディアは監査表に件数のみ表示し、梱包しません。
 * **1 ファイルの上限（v2.3.0）**：どの ZIP も `--max-part-mb`（既定 90、10 進の上限 95）を超えません。大きいキットは単独で開ける `_Part_NN_of_MM.zip` になるので、同じフォルダに置いてください。既存の出力は上書きしません（`_v2`、`_v3` …）。
 * **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは `tests/test_grok_profile.py` の合成ツリーでテストしています。Grok Bot ホストで読み取り専用のパックも一度実行済みで、そのホストでの復元は未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証で、自動テストは Linux のみで実行しています。
+
+## ライセンス
+
+MIT。[LICENSE](LICENSE) を参照してください。

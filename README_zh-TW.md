@@ -269,3 +269,7 @@ universal-agent-workspace-toolkit/
 * **每份上限（v2.3.0）**：每個 ZIP 不超過 `--max-part-mb`（預設 90，十進位上限 95）。更大的封裝會變成可獨立開啟的 `_Part_NN_of_MM.zip`，請放在同一資料夾。已存在的輸出不會被覆寫（改用 `_v2`、`_v3`……）。
 * **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔由 `tests/test_grok_profile.py` 以合成目錄測試。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
 
+
+## 授權
+
+MIT，詳見 [LICENSE](LICENSE)。
