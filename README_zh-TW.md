@@ -121,7 +121,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 未指定 `--output-dir` 時，打包寫入 `./migration_output`。未指定 `--input-dir` 時，還原讀取 `./migration_output`。該路徑不存在時，還原改用目前目錄。
 
-**限制。** `tests/test_grok_profile.py` 用的是合成目錄。有一次在 Grok Bot 主機上做過唯讀打包，因而發現虛擬環境、`store.db` 與警告清單過大的問題；該主機上還沒有執行還原。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages、`/cursor/stores` 或正在使用的 `store.db`。`--encrypt` 沒有旗標就保持關閉。HMAC 會在解密前檢查密文。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。分件封裝與虛擬環境鎖定檔（v2.3.0）只由 `tests/test_hardening_v230.py` 以合成目錄測試；尚未在第二部電腦上拆分並還原真正數 GB 的封裝。
+**限制。** Grok Bot 設定檔以合成目錄開發。有一次在 Grok Bot 主機上做過唯讀打包，因而發現虛擬環境、`store.db` 與警告清單過大的問題；該主機上還沒有執行還原。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages、`/cursor/stores` 或正在使用的 `store.db`。`--encrypt` 沒有旗標就保持關閉。HMAC 會在解密前檢查密文。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。分件封裝與虛擬環境鎖定檔（v2.3.0）只在合成目錄上檢查過；尚未在第二部電腦上拆分並還原真正數 GB 的封裝。
 
 ---
 
@@ -247,7 +247,6 @@ universal-agent-workspace-toolkit/
 ├── toolkit_crypto.py             # Optional --encrypt: AES-256-CBC plus HMAC-SHA256 (off by default)
 ├── toolkit_parts.py              # Part cap, standalone _Part_NN_of_MM.zip, re-join, long paths, _v2 naming
 ├── toolkit_preflight.py          # Offline venv requirement locks, duplicate skill/rules detection
-├── tests/                        # Synthetic Grok box + Antigravity regression + v2.3.0 hardening
 ├── CHANGELOG.md                  # Release notes
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
@@ -267,7 +266,7 @@ universal-agent-workspace-toolkit/
 * **IDE 設定**：還原時會在目標電腦已安裝的 IDE 設定中加入 `"security.promptForLocalFileProtocolHandling": false`（可用 `--skip-ide-protocol-patch` 關閉）。不是純 JSON 的檔案（例如含註解的 VS Code 設定）不會被修改，只會印出要手動加入的行；修改前會先備份為 `settings.json.bak-<時間>`。
 * **Level 5** 大檔只在審計表計數，不打包。
 * **每份上限（v2.3.0）**：每個 ZIP 不超過 `--max-part-mb`（預設 90，十進位上限 95）。更大的封裝會變成可獨立開啟的 `_Part_NN_of_MM.zip`，請放在同一資料夾。已存在的輸出不會被覆寫（改用 `_v2`、`_v3`……）。
-* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔由 `tests/test_grok_profile.py` 以合成目錄測試。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
+* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔以合成目錄檢查過。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試。
 
 
 ## 授權

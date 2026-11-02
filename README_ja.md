@@ -121,7 +121,7 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 `--output-dir` が無いとき、パックは `./migration_output` に書きます。`--input-dir` が無いとき、復元は `./migration_output` を読みます。そのパスが無いときは、復元はカレントディレクトリを使います。
 
-**制限。** `tests/test_grok_profile.py` は合成ディレクトリです。Grok Bot ホストで読み取り専用のパックを一度実行し、仮想環境、`store.db`、警告一覧の大きさが見つかりました。そのホストでは復元は未実行です。`/cursor/stores` は実験的で、live の Pages 配置とは照合していません。復元は Pages、`/cursor/stores`、稼働中の `store.db` を書きません。`--encrypt` はフラグが無い限りオフです。HMAC は復号の前に暗号文を確認します。復号に成功したあと、展開した各ファイルをマニフェストの SHA-256 と照合します。分割キットと仮想環境ロック（v2.3.0）は `tests/test_hardening_v230.py` の合成ツリーでのみテストしています。実際の数 GB のキットを分割して別のマシンで復元したことはまだありません。
+**制限。** Grok Bot プロファイルは合成ディレクトリで開発しています。Grok Bot ホストで読み取り専用のパックを一度実行し、仮想環境、`store.db`、警告一覧の大きさが見つかりました。そのホストでは復元は未実行です。`/cursor/stores` は実験的で、live の Pages 配置とは照合していません。復元は Pages、`/cursor/stores`、稼働中の `store.db` を書きません。`--encrypt` はフラグが無い限りオフです。HMAC は復号の前に暗号文を確認します。復号に成功したあと、展開した各ファイルをマニフェストの SHA-256 と照合します。分割キットと仮想環境ロック（v2.3.0）は合成ツリーでのみ確認しています。実際の数 GB のキットを分割して別のマシンで復元したことはまだありません。
 
 ---
 
@@ -247,7 +247,6 @@ universal-agent-workspace-toolkit/
 ├── toolkit_crypto.py             # Optional --encrypt: AES-256-CBC plus HMAC-SHA256 (off by default)
 ├── toolkit_parts.py              # Part cap, standalone _Part_NN_of_MM.zip, re-join, long paths, _v2 naming
 ├── toolkit_preflight.py          # Offline venv requirement locks, duplicate skill/rules detection
-├── tests/                        # Synthetic Grok box + Antigravity regression + v2.3.0 hardening
 ├── CHANGELOG.md                  # Release notes
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
@@ -267,7 +266,7 @@ universal-agent-workspace-toolkit/
 * **IDE 設定**：復元時、移行先にインストール済みの IDE の設定に `"security.promptForLocalFileProtocolHandling": false` を追加します（`--skip-ide-protocol-patch` で無効化）。通常の JSON でないファイル（コメント付きの VS Code 設定など）は編集せず、追加すべき行を表示します。編集前に `settings.json.bak-<時刻>` としてバックアップします。
 * **Level 5** の大容量メディアは監査表に件数のみ表示し、梱包しません。
 * **1 ファイルの上限（v2.3.0）**：どの ZIP も `--max-part-mb`（既定 90、10 進の上限 95）を超えません。大きいキットは単独で開ける `_Part_NN_of_MM.zip` になるので、同じフォルダに置いてください。既存の出力は上書きしません（`_v2`、`_v3` …）。
-* **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは `tests/test_grok_profile.py` の合成ツリーでテストしています。Grok Bot ホストで読み取り専用のパックも一度実行済みで、そのホストでの復元は未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証で、自動テストは Linux のみで実行しています。
+* **状況**：Google Antigravity のディレクトリ構成で動作確認済み。Grok Bot プロファイルは合成ツリーで確認しています。Grok Bot ホストで読み取り専用のパックも一度実行済みで、そのホストでの復元は未実行です。`/cursor/stores` の一覧は実験的です。他のエージェントは未検証です。
 
 ## ライセンス
 
