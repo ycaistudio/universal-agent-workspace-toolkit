@@ -240,7 +240,10 @@ class GrokBoxTests(unittest.TestCase):
         self.assertEqual(manifest["profile"], "grok")
         for secret in (BOX_SECRET, TOP_SECRET, GATEWAY, MANAGED, PLUGIN, SUBAGENT, VIDEO, TOKEN):
             self.assertNotIn(secret.encode(), blob)
-        self.assertIn(NESTED_OK.encode(), blob)
+        # v2.3.0 safety tightening: any *secret* file name is excluded by name, at any depth
+        # (v2.2.0 packed this nested custom-secrets.json). The path is reported, the content is not.
+        self.assertNotIn(NESTED_OK.encode(), blob)
+        self.assertTrue(any(item["path"].endswith("notes/custom-secrets.json") for item in manifest["excluded"]))
         self.assertIn(FACT.encode(), blob)
         self.assertNotIn(FACT, json.dumps(manifest["memory_drop"]))
         self.assertEqual(manifest["conversations"]["consistent_snapshot"], True)

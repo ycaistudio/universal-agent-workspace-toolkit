@@ -1,10 +1,10 @@
 ---
 name: universal-agent-workspace-toolkit
 description: >-
-  通用 AI 智能體工作區全域管理中樞 (v2.2.0)。支援 Antigravity 與 Grok Bot 遷移、日常快照與還原，內建 Level_0 預設機密排除、Level_1~7 階梯對齊、衝擊評估與兩次確認門禁。觸發詞：workspace toolkit, 搬電腦, 備份, backup, restore, 系統遷移, grok bot.
+  通用 AI 智能體工作區全域管理中樞 (v2.3.0)。支援 Antigravity 與 Grok Bot 遷移、日常快照與還原，內建 Level_0 預設機密排除、Level_1~7 階梯對齊、衝擊評估與兩次確認門禁。觸發詞：workspace toolkit, 搬電腦, 備份, backup, restore, 系統遷移, grok bot.
 ---
 
-# Universal AI Agent Workspace Toolkit (v2.2.0 Master)
+# Universal AI Agent Workspace Toolkit (v2.3.0 Master)
 
 ## 1. 🎯 核心定位與設計架構 (Core Architecture)
 
@@ -17,18 +17,22 @@ description: >-
 2. **Level_0 機密憑證排他守門機制**：
    - 主動探測 `.env`、API Key、Token、私鑰憑證具體儲存路徑；
    - 預設排除已知憑證檔案、私鑰區塊與真實格式 Token，MCP 機密值以佔位符取代；可用 `--include-secrets` 明確指定打包。
+   - v2.3.0 另依檔名排除（不開檔）：`*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`gateway.json`、`mcp_config.json`、`.env`、`*.pem`、`*.key` 與整個 `credentials/`；`.md`、`.py` 等文件不受檔名規則影響，`tokenizer*.json` 與 lockfile 保留。
 3. **全域 `Level_X` 命名與目錄對齊**：
    - 內部子目錄、壓縮檔名、Manifest 鍵名全數對齊：
      - `Level_1_Agent_Directives`（智能體首讀核心憲法 · ⚠️極高危，單例保護）
      - `Level_2_System_Settings`（系統運行底盤 · 僅 Key Patch 增補）
      - `Level_3_Modular_Skills`（模組化可插拔技能庫 · 合併導入，同名檔案覆寫前先建立快照）
      - `Level_4_Workspace_Docs`（專案工程文檔與腳本 · 增量同步）
-     - `Level_5_Heavy_References`（龐大素材與二進制 · 目前只計數，不打包）
+     - `Level_5_Heavy_References`（龐大素材、二進制與 5 MB 以上模型權重 · 只計數，不打包；模型權重可用 `--include-bulky` 帶回）
      - `Level_6_Memory_Drop`（僅 Grok Bot · memory-drop JSONL · 還原不寫入平台記憶）
      - `Level_7_Conversations`（僅 Grok Bot · search-index 唯讀快照與逐字稿）
-4. **單一封裝檔**：
-   - 中樞核心（Level_1~4）總量 $\le 100$MB，保持**單一原子完整檔案**（零碎片，丟失風險 = 0）；
-   - Level 5 大檔目前只在審計表計數，不打包（尚無分卷功能）。
+4. **每份設上限的封裝**：
+   - 每個 ZIP 不超過 `--max-part-mb`（預設 90，十進位上限 95，超過即拒絕）；放得下就是單一 ZIP，放不下就拆成可獨立開啟的 `<名稱>_Part_01_of_0N.zip`，每份附自己的清單，超大單檔切段後還原時接回並核對 SHA-256；
+   - 還原／檢查需要同一資料夾內的全部分件，缺件即停止；輸出不覆寫（改名 `_v2`、`_v3`）；
+   - 虛擬環境（`*venv*`、`.venv`、`site-packages`）不打包，改以該環境自己的 Python 離線匯出 `uv pip freeze` / `pip freeze` 與 `pip list --user` 到 `Level_2_System_Settings/python-envs/`（`--skip-env-lock` 關閉）；
+   - 技能／規則檔重複出現時列出各副本，請使用者決定正本；最長路徑超過 200 字元時提示解壓到 `C:\GB\` 或開啟 LongPathsEnabled；
+   - Level 5 大檔只在審計表計數，不打包。
 5. **專業三語原生自適應 (EN / ZH-TW / JA)**：
    - 預設英文（全球開源通用），自動依系統 Locale 載入繁體中文或日本語。
 6. **兩次雙重確認門禁與本機快照**：
@@ -44,6 +48,9 @@ python workspace_toolkit.py
 
 # 匯出打包模式 (自動探測 Level_0 並匯出 Level_1 至 Level_4)
 python workspace_toolkit.py --mode pack -y
+
+# 每份上限 45 MB；保留模型權重；不匯出虛擬環境鎖定檔
+python workspace_toolkit.py --mode pack --max-part-mb 45 --include-bulky --skip-env-lock -y
 
 # 導入還原模式 (自動驗真、衝擊評估、防禦快照與兩次確認)
 python workspace_toolkit.py --mode restore

@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from toolkit_parts import sibling_parts
 
 OPENSSL_CIPHER = ("-aes-256-cbc", "-pbkdf2", "-iter", "200000", "-salt")
 PASSPHRASE_ENV = "UAWT_ENCRYPT_PASSPHRASE"
@@ -166,7 +167,8 @@ def encrypt_package(zip_path, passphrase):
     zip_path = Path(zip_path)
     enc_path = Path(str(zip_path) + ".enc")
     if enc_path.exists():
-        enc_path.unlink()
+        # v2.3.0: an earlier encrypted kit is never overwritten.
+        raise EncryptionError(f"{enc_path.name} already exists; refusing to overwrite it")
     cipher_temp = Path(str(enc_path) + ".part")
     try:
         _run_openssl(zip_path, cipher_temp, passphrase, decrypt=False)
@@ -180,6 +182,11 @@ def encrypt_package(zip_path, passphrase):
             cipher_temp.unlink()
     zip_path.unlink()
     return enc_path
+
+
+def encrypt_packages(zip_paths, passphrase):
+    """Encrypt every part of a package. Each part becomes its own ``.zip.enc``."""
+    return [encrypt_package(path, passphrase) for path in zip_paths]
 
 
 def decrypt_package(enc_path, passphrase, dest=None):
@@ -247,5 +254,17 @@ def resolve_encrypted_input(input_path, passphrase):
     chosen = encrypted_candidate(input_path)
     if chosen is None:
         return Path(input_path), []
+    parts = sibling_parts(chosen)
+    if len(parts) > 1 or parts[0] != chosen:
+        # A split package: decrypt every part into one temp folder. The restore
+        # step then checks that no part is missing.
+        folder = Path(tempfile.mkdtemp(prefix="uawt_dec_"))
+        try:
+            for part in parts:
+                decrypt_package(part, passphrase, dest=folder / part.name[:-len(".enc")])
+        except Exception:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+        return folder, [folder]
     decrypted = decrypt_package(chosen, passphrase)
     return decrypted, [decrypted]
