@@ -55,7 +55,47 @@ SECRET_NAMES = {
     "secrets.json", ".netrc", "credentials", "credentials.json",
 }
 SECRET_SUFFIXES = (".kdbx", ".p12", ".pfx")
-KEY_SUFFIXES = (".pem", ".key")  # secret only if the content holds a private key block
+KEY_SUFFIXES = (".pem", ".key")  # excluded by name (v2.3.0); the file is not opened
+
+# v2.3.0 name gate. Matching is by file name only, so the file is never read.
+# Exact names that are always credential stores.
+SECRET_EXACT_NAMES = {"gateway.json", "mcp_config.json"}
+# Broad name patterns. They skip documentation and source files, so a note such as
+# secretariat_minutes.md or a script named token_counter.py is still packed.
+SECRET_NAME_PATTERNS = (
+    ("secret", re.compile(r"secret(?!ar)")),       # *secret*, but not secretary / secretariat
+    ("token", re.compile(r"token(?!iz)")),         # *token*, but not tokenizer*
+    ("credential", re.compile(r"credential")),     # *credential*
+    ("cookie", re.compile(r"cookie")),             # *cookie*
+)
+KEY_JSON_RE = re.compile(r"(?:^|[^a-z])(?:api[_-]?)?keys?(?:[^a-z]|$)")  # *key*.json, not keybindings.json
+DOC_SUFFIXES = {
+    ".md", ".markdown", ".rst", ".adoc", ".py", ".pyi", ".ipynb", ".js", ".mjs", ".cjs",
+    ".ts", ".tsx", ".jsx", ".html", ".htm", ".css", ".scss", ".sh", ".ps1", ".bat",
+    ".java", ".kt", ".go", ".rs", ".rb", ".php", ".c", ".h", ".cpp", ".hpp", ".cs", ".swift",
+    ".pdf", ".docx", ".doc", ".pptx", ".xlsx", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+}
+# Packed as-is and never caught by the name gate (tokenizer files, package lockfiles).
+LOCKFILE_NAMES = {
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "pnpm-lock.yml",
+    "composer.lock",
+    "cargo.lock",
+    "poetry.lock",
+    "gemfile.lock",
+    "packages.lock.json",
+    "tokenizer_config.json",
+    "tokenizer.json",
+}
+SECRET_DIR_NAMES = {"credentials", ".credentials"}
+
+# v2.3.0 model weights: not packed unless --include-bulky.
+MODEL_SUFFIXES = (".onnx", ".pt", ".pth", ".ckpt", ".safetensors", ".gguf")
+MODEL_BIN_SUFFIXES = (".bin",)
+MODEL_MIN_BYTES = 5 * 1000 * 1000
 
 PRIVATE_KEY_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 HIGH_CONF_RE = re.compile(
@@ -82,11 +122,71 @@ def _read_text(fp):
         return None
 
 
-def classify_file(fp, content_scan=True, warn_weak=True):
+def secret_name_reason(fp, broad=True):
+    """Name-only credential check. Returns a reason or None; the file is never opened.
+
+    ``broad=False`` keeps only the v2.2.0 exact names (used for MCP folders whose
+    values are redacted instead of dropped).
+    """
+    name = Path(fp).name.lower()
+    shown = Path(fp).name
+    if name in SECRET_NAMES or name.startswith(".env") or name.endswith(SECRET_SUFFIXES):
+        return f"credential file type ({shown})"
+    if not broad or name in LOCKFILE_NAMES:
+        return None
+    if name in SECRET_EXACT_NAMES:
+        return f"credential file name ({shown})"
+    if name.endswith(KEY_SUFFIXES):
+        return f"key or certificate file ({shown}); not opened"
+    suffix = Path(name).suffix
+    if suffix in DOC_SUFFIXES:
+        return None
+    for label, pattern in SECRET_NAME_PATTERNS:
+        if pattern.search(name):
+            return f"credential-like file name (*{label}*: {shown}); not opened"
+    if suffix == ".json" and KEY_JSON_RE.search(Path(name).stem):
+        return f"credential-like file name (*key*.json: {shown}); not opened"
+    return None
+
+
+def secret_dir_reason(name):
+    """Directories that are skipped whole: credentials/ and .credentials/."""
+    if str(name).lower() in SECRET_DIR_NAMES:
+        return f"credential directory ({name}/); not opened"
+    return None
+
+
+def venv_dir_reason(path, name):
+    """Virtual environments and installed packages. Their requirements are frozen instead."""
+    lowered = str(name).lower()
+    if lowered == "site-packages":
+        return "site-packages directory"
+    try:
+        if (Path(path) / "pyvenv.cfg").is_file():
+            return "virtualenv (pyvenv.cfg)"
+    except OSError:
+        return "unreadable directory"
+    if "venv" in lowered:
+        return "virtualenv-like directory (*venv*)"
+    return None
+
+
+def model_weight_reason(fp, size):
+    """Model weights are left out unless --include-bulky."""
+    name = Path(fp).name.lower()
+    if name.endswith(MODEL_SUFFIXES) and size >= MODEL_MIN_BYTES:
+        return "model weights (pass --include-bulky to pack)"
+    if name.endswith(MODEL_BIN_SUFFIXES) and size >= MODEL_MIN_BYTES:
+        return "large .bin, likely model weights (pass --include-bulky to pack)"
+    return None
+
+
+def classify_file(fp, content_scan=True, warn_weak=True, broad_names=True):
     """Return ("exclude" | "warn" | "ok", reason). Reasons never contain file contents."""
     name = Path(fp).name.lower()
-    if name in SECRET_NAMES or name.startswith(".env") or name.endswith(SECRET_SUFFIXES):
-        return "exclude", f"credential file type ({Path(fp).name})"
+    reason = secret_name_reason(fp, broad=broad_names)
+    if reason:
+        return "exclude", reason
 
     needs_text = content_scan or name.endswith(KEY_SUFFIXES)
     text = _read_text(fp) if needs_text else None
@@ -173,8 +273,13 @@ def resolve_workspace(user_home, custom_ws=None):
     return None
 
 
-def scan_all_assets(user_home, custom_ws=None, include_secrets=False):
-    """Scan system + workspace, classify into Level_1..Level_5, and apply the secret policy once."""
+def scan_all_assets(user_home, custom_ws=None, include_secrets=False, include_bulky=False):
+    """Scan system + workspace, classify into Level_1..Level_5, and apply the secret policy once.
+
+    v2.3.0: credentials/ folders and credential-like names are excluded by name,
+    virtualenvs are skipped and recorded in ``venvs`` (their requirements are
+    frozen at pack time), and model weights go to Level 5 unless include_bulky.
+    """
     assets = {
         "Level_1_Agent_Directives": [],
         "Level_2_System_Settings": [],
@@ -186,19 +291,52 @@ def scan_all_assets(user_home, custom_ws=None, include_secrets=False):
         "excluded": [],   # (path, reason) - never packed
         "flagged": [],    # (path, reason) - packed but worth reviewing
         "include_secrets": include_secrets,
+        "include_bulky": include_bulky,
+        "venvs": [],      # virtualenv folders that were skipped
+        "skipped": [],    # (path, reason) - directories not walked
         "sizes_mb": {},
         "t_core_mb": 0.0,
     }
 
-    def admit(fp, level_key, content_scan=True, extra=None):
+    def keep_dirs(root, dirs):
+        """Filter os.walk dirs in place and record why a folder was left out."""
+        kept = []
+        for sub in dirs:
+            full = Path(root) / sub
+            if sub in EXCLUDED_DIRS:
+                if sub in (".venv", "venv") and (full / "pyvenv.cfg").is_file():
+                    assets["venvs"].append(full)
+                continue
+            reason = None if include_secrets else secret_dir_reason(sub)
+            if reason:
+                assets["excluded"].append((full, reason))
+                continue
+            reason = venv_dir_reason(full, sub)
+            if reason:
+                assets["skipped"].append((full, reason))
+                if reason.startswith("virtualenv"):
+                    assets["venvs"].append(full)
+                continue
+            kept.append(sub)
+        dirs[:] = kept
+
+    def admit(fp, level_key, content_scan=True, extra=None, broad_names=True):
         """Apply the secret policy; append to the level list unless excluded."""
         if not include_secrets:
-            verdict, reason = classify_file(fp, content_scan=content_scan)
+            verdict, reason = classify_file(fp, content_scan=content_scan, broad_names=broad_names)
             if verdict == "exclude":
                 assets["excluded"].append((fp, reason))
                 return
             if verdict == "warn":
                 assets["flagged"].append((fp, reason))
+        if not include_bulky and level_key != "Level_5_Heavy_References":
+            try:
+                size = Path(fp).stat().st_size
+            except OSError:
+                size = 0
+            if model_weight_reason(fp, size):
+                assets["Level_5_Heavy_References"].append((fp, size / (1024 * 1024)))
+                return
         assets[level_key].append(extra if extra is not None else fp)
 
     # Level_3 skills
@@ -208,7 +346,7 @@ def scan_all_assets(user_home, custom_ws=None, include_secrets=False):
             if d.is_dir() and (d / "SKILL.md").exists():
                 assets["skills_names"].append(d.name)
                 for root, dirs, files in os.walk(d):
-                    dirs[:] = [sub for sub in dirs if sub not in EXCLUDED_DIRS]
+                    keep_dirs(root, dirs)
                     for f in files:
                         admit(Path(root) / f, "Level_3_Modular_Skills")
 
@@ -220,14 +358,15 @@ def scan_all_assets(user_home, custom_ws=None, include_secrets=False):
             for f in files:
                 fp = Path(root) / f
                 if fp.suffix.lower() == ".json":
-                    admit(fp, "Level_2_System_Settings", content_scan=False)
+                    # MCP values are redacted by the packer, so only the exact v2.2.0 names drop a file here.
+                    admit(fp, "Level_2_System_Settings", content_scan=False, broad_names=False)
 
     # Workspace: Level_1 directives, Level_4 docs, Level_5 heavy references
     ws_dir = resolve_workspace(user_home, custom_ws)
     if ws_dir:
         assets["ws_scan"] = ws_dir
         for root, dirs, files in os.walk(ws_dir):
-            dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
+            keep_dirs(root, dirs)
             for f in files:
                 fp = Path(root) / f
                 if f in ("AGENTS.md", "CLAUDE.md", ".cursorrules", ".clinerules"):
@@ -254,4 +393,16 @@ def scan_all_assets(user_home, custom_ws=None, include_secrets=False):
     assets["sizes_mb"]["Level_5_Heavy_References"] = sum(sz for _, sz in assets["Level_5_Heavy_References"])
     assets["t_core_mb"] = sum(assets["sizes_mb"][k] for k in (
         "Level_1_Agent_Directives", "Level_2_System_Settings", "Level_3_Modular_Skills"))
+    # Same skill or rules tree in more than one place: the user picks the canonical copy.
+    from toolkit_preflight import find_duplicates
+    assets["duplicates"] = find_duplicates(
+        assets["Level_1_Agent_Directives"] + assets["Level_3_Modular_Skills"] + assets["Level_4_Workspace_Docs"],
+        display=lambda p: _home_display(p, user_home))
     return assets
+
+
+def _home_display(path, user_home):
+    try:
+        return "~/" + Path(path).resolve().relative_to(Path(user_home).resolve()).as_posix()
+    except (ValueError, OSError):
+        return str(path)

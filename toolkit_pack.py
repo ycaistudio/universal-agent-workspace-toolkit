@@ -2,18 +2,21 @@
 Universal AI Agent Workspace Toolkit - Packaging Engine (toolkit_pack.py)
 Implements Level_X Aligned Staging, Zip Compression, and Manifest Building.
 
+v2.3.0: output is capped per zip (--max-part-mb, default 90, hard max 95 decimal MB);
+larger kits are written as standalone parts (see toolkit_parts). Existing files are
+never overwritten. Virtualenv requirement locks are added under Level_2/python-envs.
+
 The packer only COPIES from the source machine. It never modifies or deletes originals.
 """
 
-import os
 import sys
-import json
 import shutil
-import zipfile
 import platform
 from datetime import datetime
 from pathlib import Path
 from toolkit_scanner import win_p, calculate_sha256, redact_mcp_json
+from toolkit_parts import DEFAULT_PART_BYTES, write_package
+from toolkit_preflight import LOCK_DIR, emit_env_locks
 
 LEVELS = (
     "Level_1_Agent_Directives",
@@ -43,7 +46,18 @@ def _display(path, user_home):
         return str(path)
 
 
-def run_pack(assets, output_base, user_home, include_level5=False, encrypted=False):
+def _level5_rel(fp, bases):
+    for base in bases:
+        if base:
+            try:
+                return Path(fp).relative_to(base)
+            except ValueError:
+                continue
+    return Path(Path(fp).name)
+
+
+def run_pack(assets, output_base, user_home, include_level5=False, encrypted=False,
+             max_part_bytes=DEFAULT_PART_BYTES, env_lock=True):
     """Executes the export & snapshot backup packaging workflow."""
     include_secrets = assets["include_secrets"]
     now = datetime.now()
@@ -104,20 +118,29 @@ def run_pack(assets, output_base, user_home, include_level5=False, encrypted=Fal
             level_counts[LEVELS[3]] += 1
 
         # Level_5 heavy references (only when explicitly requested)
-        if include_level5 and ws_base:
+        if include_level5:
             for fp, _ in assets["Level_5_Heavy_References"]:
-                _copy(fp, staging_dir / LEVELS[4] / fp.relative_to(ws_base), staging_dir, 5, file_manifest)
+                rel = _level5_rel(fp, (ws_base, skills_base))
+                _copy(fp, staging_dir / LEVELS[4] / rel, staging_dir, 5, file_manifest)
                 level_counts[LEVELS[4]] += 1
 
+        # Virtualenvs are not copied; their requirement locks are (offline freeze).
+        env_locks = None
+        if env_lock:
+            lock_dir = staging_dir / LEVELS[1] / LOCK_DIR
+            env_locks = emit_env_locks(assets.get("venvs", []), lock_dir, display=lambda p: _display(p, user_home))
+            if lock_dir.is_dir():
+                for lock in sorted(lock_dir.iterdir()):
+                    _record(lock, staging_dir, 2, file_manifest)
+
         total_size_mb = sum(item["size"] for item in file_manifest.values()) / (1024 * 1024)
-        zip_filename = (
-            f"Level_1_to_5_Full_Archive_{ts_str}.zip" if include_level5
-            else f"Level_1_to_4_Core_Workspace_{ts_str}.zip"
+        zip_stem = (
+            f"Level_1_to_5_Full_Archive_{ts_str}" if include_level5
+            else f"Level_1_to_4_Core_Workspace_{ts_str}"
         )
-        zip_path = packages_dir / zip_filename
 
         manifest_doc = {
-            "manifest_version": "v2.1.0",
+            "manifest_version": "v2.3.0",
             "profile": "antigravity",
             "tracking_id": tracking_id,
             "created_at": now.isoformat(),
@@ -135,28 +158,23 @@ def run_pack(assets, output_base, user_home, include_level5=False, encrypted=Fal
             "excluded": excluded,
             "redacted": redacted,
             "flagged": flagged,
+            "skipped_dirs": [{"path": _display(p, user_home), "reason": r} for p, r in assets.get("skipped", [])],
+            "env_locks": env_locks,
+            "duplicates": assets.get("duplicates", []),
             "file_manifest": file_manifest
         }
-        (staging_dir / "package_manifest.json").write_text(
-            json.dumps(manifest_doc, indent=2, ensure_ascii=False), encoding="utf-8")
-
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, files in os.walk(staging_dir):
-                for f in files:
-                    fp = Path(root) / f
-                    zipf.write(win_p(fp), arcname=str(fp.relative_to(staging_dir)))
-
-        # Self-check: every manifest entry made it into the zip
-        with zipfile.ZipFile(zip_path, "r") as zipf:
-            zip_names = set(zipf.namelist())
-            for rel_p in file_manifest:
-                if rel_p not in zip_names:
-                    raise RuntimeError(f"Integrity check failed: missing {rel_p} in zip!")
+        # Writes one zip, or standalone parts when the cap is exceeded; self-checks every entry.
+        zip_paths = write_package(staging_dir, manifest_doc, packages_dir, zip_stem, max_part_bytes)
+        zip_path = zip_paths[0]
     finally:
         shutil.rmtree(win_p(staging_dir), ignore_errors=True)
 
     return {
         "zip_path": zip_path,
+        "zip_paths": zip_paths,
+        "long_paths": manifest_doc.get("long_paths"),
+        "env_locks": env_locks,
+        "duplicates": manifest_doc["duplicates"],
         "tracking_id": tracking_id,
         "total_files": len(file_manifest),
         "total_size_mb": round(total_size_mb, 2),

@@ -10,7 +10,8 @@ import platform
 import shutil
 from pathlib import Path
 
-from toolkit_crypto import EncryptionError, encrypt_package, encrypted_candidate, resolve_encrypted_input
+from toolkit_crypto import EncryptionError, encrypt_packages, encrypted_candidate, resolve_encrypted_input
+from toolkit_parts import DEFAULT_PART_MB, PartError, validate_part_mb
 from toolkit_i18n import detect_language, get_text
 from toolkit_grok import (
     GrokError,
@@ -92,16 +93,67 @@ def obtain_passphrase(args, t):
     return password
 
 
-def encrypt_if_requested(args, t, zip_path):
+def encrypt_if_requested(args, t, result):
+    """Encrypt every written part in place. Updates result["zip_path"] / result["zip_paths"]."""
     if not args.encrypt:
-        return zip_path
+        return result
+    paths = result.get("zip_paths") or [result["zip_path"]]
     try:
-        encrypted = encrypt_package(zip_path, obtain_passphrase(args, t))
+        encrypted = encrypt_packages(paths, obtain_passphrase(args, t))
     except EncryptionError as exc:
-        print(f"  ❌ {t('encrypt_fail').format(path=zip_path, detail=exc)}")
+        print(f"  ❌ {t('encrypt_fail').format(path=paths[0], detail=exc)}")
         sys.exit(4)
     print(f"  • {t('encrypt_ok')}")
-    return encrypted
+    result["zip_paths"] = encrypted
+    result["zip_path"] = encrypted[0]
+    return result
+
+
+def remove_temps(temps):
+    for temp in temps:
+        temp = Path(temp)
+        if temp.is_dir():
+            shutil.rmtree(temp, ignore_errors=True)
+        else:
+            temp.unlink(missing_ok=True)
+
+
+def print_preflight(t, assets, max_part_bytes):
+    """Warnings shown before the pack confirmation. None of them block (-y still works)."""
+    duplicates = assets.get("duplicates") or []
+    if duplicates:
+        print(f"  ⚠️ {t('dup_hdr').format(count=len(duplicates))}")
+        for group in duplicates[:8]:
+            kind = t("dup_identical") if group["kind"] == "identical" else t("dup_diverged")
+            print(f"    - {group['file']} [{kind}]")
+            for location in group["locations"][:6]:
+                print(f"        {location}")
+        print(f"  💡 {t('dup_action')}")
+    venvs = assets.get("venvs") or []
+    if venvs:
+        print(f"  • {t('venv_found').format(count=len(venvs))}")
+    print(f"  • {t('part_cap').format(mb=max_part_bytes / 1000000)}")
+
+
+def print_pack_extras(t, result):
+    paths = result.get("zip_paths") or [result["zip_path"]]
+    if len(paths) > 1:
+        print(f"  • {t('parts_written').format(count=len(paths))}")
+        for path in paths:
+            print(f"    - {Path(path).name}")
+        print(f"  💡 {t('parts_keep_together')}")
+    long_paths = result.get("long_paths") or {}
+    if long_paths.get("over_limit"):
+        print(f"  ⚠️ {t('long_path_warn').format(chars=long_paths['max_path_chars'], limit=long_paths['limit'])}")
+    locks = result.get("env_locks") or {}
+    ok = [entry for entry in locks.get("venvs", []) if entry.get("status") == "ok"]
+    failed = [entry for entry in locks.get("venvs", []) if entry.get("status") != "ok"]
+    if ok or failed:
+        print(f"  • {t('env_lock_done').format(ok=len(ok), failed=len(failed))}")
+        for entry in failed[:8]:
+            print(f"    - {entry['path']}: {entry.get('error')}")
+    if result.get("duplicates"):
+        print(f"  ⚠️ {t('dup_hdr').format(count=len(result['duplicates']))} → package_manifest.json \"duplicates\"")
 
 
 def prepare_input(args, t, in_path):
@@ -144,9 +196,8 @@ def print_grok_audit(t, assets):
     print(f"  • {t('core_size').format(size=assets['t_core_mb'])}")
     packed = sum(assets["sizes_mb"][key] for key in (L1, L2, L3, L4, L6, L7, L8))
     print(f"  • Packed levels 1-4 + 6-8 (estimate): {packed:.2f} MB")
-    core_bytes = sum(assets["sizes_mb"][key] for key in (L1, L2, L3, L4))
-    if core_bytes > 100:
-        print("  ⚠️ Levels 1-4 are above 100 MB. The zip is still a single file; Level 5 stays unpacked.")
+    if packed * 1024 * 1024 > assets.get("max_part_bytes", DEFAULT_PART_MB * 1000000):
+        print(f"  ⚠️ {t('split_notice').format(mb=assets.get('max_part_bytes', DEFAULT_PART_MB * 1000000) / 1000000)}")
     memory = assets["memory"]
     print(f"  • Memory drop: {memory.get('drop_root')} ({'present' if memory.get('present') else 'absent'})")
     for agent in memory.get("agents") or []:
@@ -175,6 +226,8 @@ def pack_grok(args, t, user_home, include_secrets):
     if bulky not in ("0", "1"):
         print(f"  ❌ INCLUDE_BULKY_DIRS is {bulky!r}; the only accepted settings are 0 and 1")
         sys.exit(2)
+    if args.include_bulky:
+        bulky = "1"
     try:
         assets = scan_grok_assets(
             paths,
@@ -187,6 +240,7 @@ def pack_grok(args, t, user_home, include_secrets):
     except GrokError as exc:
         print(f"  ❌ {exc}")
         sys.exit(2)
+    assets["max_part_bytes"] = args.max_part_bytes
 
     print_section(t("sec_lvl0"))
     if include_secrets:
@@ -201,11 +255,17 @@ def pack_grok(args, t, user_home, include_secrets):
         for row in summarize_flags(assets["flagged"], assets["paths"]):
             print(f"    - {row['folder']}: {row['count']} ({row['reason']})")
     print_grok_audit(t, assets)
+    print_preflight(t, assets, args.max_part_bytes)
     if not args.yes and not yes_no(f"\n  {t('confirm_pack')}", default_yes=True):
         print("  Packaging cancelled by user.")
         return
-    result = run_grok_pack(assets, out_base, user_home, encrypted=args.encrypt)
-    result["zip_path"] = encrypt_if_requested(args, t, result["zip_path"])
+    try:
+        result = run_grok_pack(assets, out_base, user_home, encrypted=args.encrypt,
+                               max_part_bytes=args.max_part_bytes, env_lock=not args.skip_env_lock)
+    except PartError as exc:
+        print(f"  ❌ {exc}")
+        sys.exit(2)
+    encrypt_if_requested(args, t, result)
     print("\n" + "=" * 68)
     print(f"  🎉 {t('pack_success')}")
     print("=" * 68)
@@ -214,6 +274,7 @@ def pack_grok(args, t, user_home, include_secrets):
     print(f"  • Total Size    : {result['total_size_mb']} MB (Files: {result['total_files']})")
     print(f"  • Destination   : {out_base}")
     print(f"  • {t('grok_not_written')}")
+    print_pack_extras(t, result)
     if result["redacted"]:
         print_items(t("redacted_hdr").format(count=len(result["redacted"])),
                     [(p, "secret values replaced") for p in result["redacted"]])
@@ -298,14 +359,26 @@ def main():
                         help="Grok restore: OLD=NEW agent id. Repeat for more than one bot.")
     parser.add_argument("--uuid-map-file", default=None,
                         help="Grok restore: JSON object of old agent id to new agent id")
+    parser.add_argument("--max-part-mb", default=str(DEFAULT_PART_MB),
+                        help="Pack: largest zip to write, in decimal MB (default 90, max 95). "
+                             "Bigger kits are split into standalone _Part_NN_of_MM.zip files.")
+    parser.add_argument("--include-bulky", action="store_true",
+                        help="Pack model weights (.onnx/.pt/.ckpt/.safetensors/large .bin) and, for Grok, "
+                             ".venv-style folders without pyvenv.cfg (same as INCLUDE_BULKY_DIRS=1)")
+    parser.add_argument("--skip-env-lock", action="store_true",
+                        help="Pack: do not write virtualenv requirement locks (python-envs/)")
     parser.add_argument("-y", "--yes", action="store_true", help="Non-interactive auto confirm")
     args = parser.parse_args()
+    try:
+        args.max_part_bytes = validate_part_mb(args.max_part_mb)
+    except PartError as exc:
+        parser.error(str(exc))
 
     user_home = Path.home()
     lang = args.lang or detect_language()[0]
     t = lambda k: get_text(k, lang)
 
-    print_banner(t("title") + " (v2.2.0)")
+    print_banner(t("title") + " (v2.3.0)")
     host_info = f"{platform.system()} {platform.release()} | User: {user_home.name} | Python {sys.version_info.major}.{sys.version_info.minor}"
     print(f"  [Host]: {host_info}")
     print(f"  [Language]: {lang.upper()}  (Switch: --lang en | --lang zh-tw | --lang ja)")
@@ -337,7 +410,8 @@ def main():
             pack_grok(args, t, user_home, include_secrets)
             return
 
-        assets = scan_all_assets(user_home, args.workspace_dir, include_secrets)
+        assets = scan_all_assets(user_home, args.workspace_dir, include_secrets,
+                                 include_bulky=args.include_bulky)
 
         # Stage 1: Level_0 secret policy report (the same scan the packer uses)
         print_section(t("sec_lvl0"))
@@ -366,7 +440,13 @@ def main():
             size = f"{assets['sizes_mb'][key]:.2f} MB"
             print(f"  | {lvl} | {label:<29} | {len(assets[key]):<7} | {size:<9} | {strategy:<15} |")
         print("  " + "-" * 66)
-        print(f"  • {t('core_size').format(size=assets['t_core_mb'])}\n")
+        print(f"  • {t('core_size').format(size=assets['t_core_mb'])}")
+        core_mb = sum(assets["sizes_mb"][k] for k in (
+            "Level_1_Agent_Directives", "Level_2_System_Settings", "Level_3_Modular_Skills", "Level_4_Workspace_Docs"))
+        if core_mb * 1024 * 1024 > args.max_part_bytes:
+            print(f"  ⚠️ {t('split_notice').format(mb=args.max_part_bytes / 1000000)}")
+        print_preflight(t, assets, args.max_part_bytes)
+        print()
 
         # Stage 3: Destination
         out_base = Path(args.output_dir).resolve() if args.output_dir else Path("./migration_output").resolve()
@@ -379,8 +459,13 @@ def main():
                 print("  Packaging cancelled by user.")
                 return
 
-        result = run_pack(assets, out_base, user_home, encrypted=args.encrypt)
-        result["zip_path"] = encrypt_if_requested(args, t, result["zip_path"])
+        try:
+            result = run_pack(assets, out_base, user_home, encrypted=args.encrypt,
+                              max_part_bytes=args.max_part_bytes, env_lock=not args.skip_env_lock)
+        except PartError as exc:
+            print(f"  ❌ {exc}")
+            sys.exit(2)
+        encrypt_if_requested(args, t, result)
         print("\n" + "=" * 68)
         print(f"  🎉 {t('pack_success')}")
         print("=" * 68)
@@ -388,6 +473,7 @@ def main():
         print(f"  • Package File  : {result['zip_path']}")
         print(f"  • Total Size    : {result['total_size_mb']} MB (Files: {result['total_files']})")
         print(f"  • Destination   : {out_base}")
+        print_pack_extras(t, result)
         if result["redacted"]:
             print_items(t("redacted_hdr").format(count=len(result["redacted"])),
                         [(p, "secret values replaced") for p in result["redacted"]])
@@ -407,6 +493,8 @@ def main():
                 sys.exit(2)
             print_section(t("restore_sec1"))
             print(f"  • {t('pkg_chosen').format(name=audit['package'].name)}")
+            if len(audit.get("parts") or []) > 1:
+                print(f"  • {t('parts_verified').format(count=len(audit['parts']))}")
             for p, why in audit["ignored"]:
                 print(f"  • {t('pkg_ignored').format(name=p.name, why=why)}")
             if audit["corrupted_files"]:
@@ -499,8 +587,7 @@ def main():
             print()
         finally:
             cleanup_staging(audit["staging_dir"])
-            for temp in temps:
-                Path(temp).unlink(missing_ok=True)
+            remove_temps(temps)
 
     # ------------------ MODE: INSPECT ------------------
     elif mode == "inspect":
@@ -512,6 +599,8 @@ def main():
                 print(f"  ❌ {audit['error']}")
                 sys.exit(2)
             print(f"\n  [Package]: {audit['package'].name}")
+            if len(audit.get("parts") or []) > 1:
+                print(f"  [Parts]: {len(audit['parts'])} ({', '.join(p.name for p in audit['parts'])})")
             print(f"  [Profile]: {audit['manifest'].get('profile', 'antigravity')}")
             print(f"  [Audit Summary]: Verified {audit['verified_files']} files (SHA-256).")
             if audit["manifest"].get("profile") == "grok":
@@ -528,8 +617,7 @@ def main():
             print("  ✓ Package integrity verified.")
         finally:
             cleanup_staging(audit["staging_dir"])
-            for temp in temps:
-                Path(temp).unlink(missing_ok=True)
+            remove_temps(temps)
 
 
 if __name__ == "__main__":

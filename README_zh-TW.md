@@ -18,8 +18,8 @@
 1. **單一控制台 (`workspace_toolkit.py`)**：告別分散的 A/B 腳本與舊時代 `.bat` 批次檔，一套純 Python 核心全平台通用。
 2. **Level_0 機密安全守門**：預設排除已知憑證檔案、私鑰區塊與真實格式的 API Token，MCP 設定內的機密值以佔位符取代；可用 `--include-secrets` 明確指定打包。偵測依檔名與格式比對，請檢視報告。
 3. **全域 `Level_X` 絕對對齊**：封裝壓縮檔、子資料夾、Manifest 鍵名保持一致。
-4. **單一封裝檔**：Level 1-4 打包成一個 ZIP，不分卷。
-5. **Level 5 大檔**：只在審計表計數，目前不打包（尚無分卷功能）。
+4. **每份設上限的核心封裝**：Level 1-4 放得進 `--max-part-mb`（預設 90，十進位上限 95）時打包成一個 ZIP；更大時拆成可獨立開啟的 `_Part_NN_of_MM.zip`，每份附自己的清單；還原需要全部分件並逐一驗證。
+5. **Level 5 大檔**：只在審計表計數，不打包。5 MB 以上的模型權重（`.onnx`、`.pt`、`.ckpt`、`.safetensors`、`.bin` 等）除非加 `--include-bulky`，否則歸入 Level 5。
 6. **兩次雙重確認門禁**：解壓前產出衝擊評估報告，第一次確認後自動建立本機防禦快照，第二次確認後始准寫入，`AGENTS.md` 預設存為 `.incoming`，絕不破壞本機現有 AI 靈魂！
 
 
@@ -33,7 +33,7 @@
 | **2** | **Secret Leakage Risk<br>機密憑證外洩風險<br>機密情報漏洩リスク** | **🇬🇧 Accidental Key Leaks**: Full-folder archiving easily bundles `.env`, API keys, or private SSH keys into shared clouds or public repos.<br>**🇹🇼 誤打包 API Keys**：傳統整包壓縮常不慎包含 `.env`、私鑰或私人 Token，上傳至雲端引發嚴重資安危機。<br>**🇯🇵 秘密情報の誤混入**：全フォルダの一括圧縮により、`.env` や API キーが誤って共有ストレージへ流出する危険。 | **🇬🇧 Level_0 secret gate**: Known credential files and token patterns are excluded by default, MCP secret values are replaced by a placeholder, and the report lists every exclusion. `--include-secrets` overrides.<br>**🇹🇼 Level_0 機密守門**：已知憑證檔案與 Token 格式預設排除，MCP 機密值以佔位符取代，報告列出所有排除項目；`--include-secrets` 可覆寫。<br>**🇯🇵 Level_0 機密ゲート**：既知の認証情報ファイルとトークン形式を既定で除外し、MCP の機密値はプレースホルダーに置換、除外項目をレポートに一覧表示。`--include-secrets` で上書き可能。 |
 | **3** | **Destructive Overwrite<br>粗暴覆蓋現有配置<br>既存設定の上書き破壊** | **🇬🇧 Blind Overwrite**: Standard extraction overwrites active files without warning, destroying existing rules with zero rollback.<br>**🇹🇼 盲目解壓覆蓋**：還原時直接蓋過目標目錄，抹殺現存最新規範與成果，且無法回滾撤銷。<br>**🇯🇵 無警告の上書き**：解凍時に既存の最新ルールや設定が無警告で上書きされ、復旧も不可能。 | **🇬🇧 2-Step Gate + Snapshot**: Pre-restore impact report, automatic rollback snapshot, and `.incoming` dual-track staging.<br>**🇹🇼 雙重門禁 + 自動快照**：還原前呈現衝擊評估，自動建立全環境備份快照，`AGENTS.md` 存為 `.incoming` 雙軌待審。<br>**🇯🇵 2段階承認 + 自動保護**：復元前に影響評価を提示し、自動スナップショット生成と `.incoming` 二重化保存を実行。 |
 | **4** | **Platform Lock-in<br>平台與腳本依賴陷阱<br>プラットフォーム依存** | **🇬🇧 OS-Specific Scripts**: Heavy reliance on Windows `.bat` or Linux `.sh` scripts and external pip packages breaks cross-OS workflows.<br>**🇹🇼 綁定特定系統腳本**：過度依賴 `.bat` 或 `.sh` 及第三方依賴包，遇到跨平台環境時執行中斷。<br>**🇯🇵 OS 依存スクリプト**：特定の OS 向けスクリプトや外部ライブラリに依存し、別環境で動作不能になる。 | **🇬🇧 100% Pure Python**: Built strictly with Python standard library (zero external dependencies), driven natively via Agent prompts.<br>**🇹🇼 100% 純 Python 標準庫**：零外部依賴，跨 Windows/macOS/Linux 原生通用，Agent 可直接以自然語言驅動。<br>**🇯🇵 100% 標準 Python**：追加依存ゼロの純粋な Python 標準ライブラリで構築。自然言語で直接駆動可能。 |
-| **5** | **Archive Bloat<br>輕重資產混雜超限<br>大容量アーカイブの破綻** | **🇬🇧 Monolithic Zip Failure**: Bundling multi-GB datasets with lightweight rules into one massive zip breaches cloud upload limits.<br>**🇹🇼 單一巨型壓縮包崩潰**：數十 GB 資料集與幾十 KB 核心規則混雜打包，超出雲端與 GitHub 上傳上限。<br>**🇯🇵 単一巨大 ZIP の破綻**：巨大データと軽量ルールを単一 ZIP に混載し、クラウド転送制限超過や破損を頻発。 | **🇬🇧 Core vs heavy assets**: Levels 1-4 go into one zip; heavy media (Level 5) is counted but not packed.<br>**🇹🇼 核心與大檔分流**：Level 1-4 打包成一個 ZIP；Level 5 大檔只計數、不打包。<br>**🇯🇵 中核と大容量素材の分離**：Level 1〜4 を 1 つの ZIP に梱包し、Level 5 は件数のみ表示して梱包しません。 |
+| **5** | **Archive Bloat<br>輕重資產混雜超限<br>大容量アーカイブの破綻** | **🇬🇧 Monolithic Zip Failure**: Bundling multi-GB datasets with lightweight rules into one massive zip breaches cloud upload limits.<br>**🇹🇼 單一巨型壓縮包崩潰**：數十 GB 資料集與幾十 KB 核心規則混雜打包，超出雲端與 GitHub 上傳上限。<br>**🇯🇵 単一巨大 ZIP の破綻**：巨大データと軽量ルールを単一 ZIP に混載し、クラウド転送制限超過や破損を頻発。 | **🇬🇧 Core vs heavy assets, capped parts**: Levels 1-4 are packed; no zip is larger than `--max-part-mb` (default 90, max 95). A bigger kit is split into standalone `_Part_NN_of_MM.zip` files. Heavy media and model weights (Level 5) are counted but not packed.<br>**🇹🇼 核心與大檔分流、每份設上限**：Level 1-4 會打包；每個 ZIP 不超過 `--max-part-mb`（預設 90，最大 95），超過就拆成可獨立開啟的 `_Part_NN_of_MM.zip`。Level 5 大檔與模型權重只計數、不打包。<br>**🇯🇵 中核と大容量素材の分離・上限付きパート**：Level 1〜4 を梱包し、どの ZIP も `--max-part-mb`（既定 90、最大 95）を超えません。超える場合は単独で開ける `_Part_NN_of_MM.zip` に分けます。Level 5 の大容量素材とモデルの重みは件数のみ表示して梱包しません。 |
 
 
 ---
@@ -56,12 +56,12 @@
 
 | Level / 級別 / 階層 | Directory / 目錄名稱 / ディレクトリ | Contained Assets / 包含內容 / 構成要素 | Defense Strategy / 防禦策略 / 防護戦略 |
 | :--- | :--- | :--- | :--- |
-| **Level_0<br>Credentials<br>機密憑證<br>機密情報** | *(None / 不建立目錄 / 作成なし)* | `.env`, API Keys, Private Keys, Tokens (`id_rsa`, `auth.json`) | **❌ Excluded by default / 預設排除 / 既定で除外**<br>🇬🇧 Known credential files and token patterns are skipped; `--include-secrets` overrides.<br>🇹🇼 已知憑證檔案與 Token 格式預設略過；`--include-secrets` 可明確指定打包。<br>🇯🇵 既知の認証情報ファイルとトークン形式は既定でスキップ。`--include-secrets` で明示的に含められます。 |
+| **Level_0<br>Credentials<br>機密憑證<br>機密情報** | *(None / 不建立目錄 / 作成なし)* | `.env`, API Keys, Private Keys, Tokens (`id_rsa`, `auth.json`); by name: `*secret*`, `*token*`, `*credential*`, `*cookie*`, `*key*.json`, `*.pem`, `*.key`, `credentials/` | **❌ Excluded by default / 預設排除 / 既定で除外**<br>🇬🇧 Known credential files and token patterns are skipped; `--include-secrets` overrides.<br>🇹🇼 已知憑證檔案與 Token 格式預設略過；`--include-secrets` 可明確指定打包。<br>🇯🇵 既知の認証情報ファイルとトークン形式は既定でスキップ。`--include-secrets` で明示的に含められます。 |
 | **Level_1<br>Directives<br>智能體憲法<br>基本指示書** | `Level_1_Agent_Directives/` | `AGENTS.md`, `CLAUDE.md`, `.cursorrules` | **🔴 Single-Instance Protection / 極高危單例保護 / 最高保護**<br>🇬🇧 In existing-agent mode the local file is kept and the incoming version is saved as `.incoming`.<br>🇹🇼 「現存環境」模式下保留本機舊檔，新版另存為 `.incoming`。<br>🇯🇵 「既存環境」モードでは現行ファイルを保持し、新しい版は `.incoming` として保存。 |
 | **Level_2<br>System Settings<br>系統底層設定<br>システム設定** | `Level_2_System_Settings/` | `ide_user_settings.json`, MCP Configs | **🟠 Incremental Key Patch / 僅做 Patch 增補 / パッチ追記**<br>🇬🇧 Only injects protocol keys (e.g. `file:///` bypass); preserves UI/themes.<br>🇹🇼 僅注入通訊協議免警告設定，絕不覆蓋本機原有字型與外觀。<br>🇯🇵 プロトコル設定のみをパッチ注入し、既存のフォントや外観テーマを維持。 |
 | **Level_3<br>Modular Skills<br>模組化技能庫<br>モジュールスキル** | `Level_3_Modular_Skills/` | Skill Folders (`SKILL.md`, `scripts/`, `manifest`) | **🟡 Merge Import / 合併導入 / マージ**<br>🇬🇧 New skills are added. Same-named skill files are overwritten by the packaged version (local-only files are kept); the rollback snapshot holds the previous copy.<br>🇹🇼 新技能會增補；同名技能檔案會被封裝版本覆寫（僅存在於本機的檔案保留），還原快照保存舊版。<br>🇯🇵 新しいスキルは追加されます。同名のスキルファイルはパッケージ版で上書きされ（ローカルのみのファイルは保持）、以前の内容はロールバック用スナップショットに残ります。 |
 | **Level_4<br>Workspace Docs<br>專案工程文檔<br>プロジェクト文書** | `Level_4_Workspace_Docs/` | Markdown Notes, SOPs, Python Scripts | **🔵 Incremental Sync / 增量同步 / 増分同期**<br>🇬🇧 Syncs workspace files while preserving newer local files on target.<br>🇹🇼 工作區檔案增量同步，目標目錄已有之同名檔案保留本機最新版。<br>🇯🇵 ワークスペース文書を増分同期（移行先の新しい同名ファイルは維持）。 |
-| **Level_5<br>Heavy Media<br>龐大素材資料<br>大容量メディア** | `Level_5_Heavy_References/` | Large PDFs, Videos, Datasets (>10MB - GBs) | **⚪ Not packed / 目前不打包 / 現在は梱包しません**<br>🇬🇧 Counted in the audit but not packed. There is no splitting yet.<br>🇹🇼 只在審計表計數，目前不打包，也尚無分卷功能。<br>🇯🇵 監査表に件数のみ表示し、梱包しません。分割機能は未実装です。 |
+| **Level_5<br>Heavy Media<br>龐大素材資料<br>大容量メディア** | `Level_5_Heavy_References/` | Large PDFs, Videos, Datasets (>10MB - GBs); model weights ≥ 5 MB (`.onnx` `.pt` `.ckpt` `.safetensors` `.bin` ...) | **⚪ Not packed / 目前不打包 / 現在は梱包しません**<br>🇬🇧 Counted in the audit but not packed. Model weights come back with `--include-bulky`. Levels 1-4 are split into parts when they exceed `--max-part-mb`.<br>🇹🇼 只在審計表計數，不打包。模型權重可用 `--include-bulky` 帶回。Level 1-4 超過 `--max-part-mb` 時會拆成分件。<br>🇯🇵 監査表に件数のみ表示し、梱包しません。モデルの重みは `--include-bulky` で戻せます。Level 1〜4 は `--max-part-mb` を超えるとパートに分けます。 |
 | **Level_6<br>Memory drop<br>記憶匯出<br>メモリ書き出し** | `Level_6_Memory_Drop/` | Grok memory-drop JSONL (`shared-user/`, `agents/<uuid>/`) | **🟣 Incoming only / 只進 incoming / incoming のみ**<br>🇬🇧 Packed. Restore does not write platform memory. Each bot imports its own `fact` lines.<br>🇹🇼 會打包。還原不寫入平台記憶，需由各 Bot 自行匯入 `fact`。<br>🇯🇵 梱包します。復元はプラットフォームのメモリを書きません。各 Bot が自分の `fact` を取り込みます。 |
 | **Level_7<br>Conversations<br>對話快照<br>会話スナップショット** | `Level_7_Conversations/` | Read-only `search-index.db` snapshot, each bot's `store.db` snapshot, + `agent-transcripts/` | **🔒 Not restored over live data / 不覆蓋 live 資料 / 稼働中データは上書きしない**<br>🇬🇧 SQLite `backup()` snapshots plus transcripts. Never replace the live index, `store.db`, or transcripts.<br>🇹🇼 以 SQLite `backup()` 做快照並附上逐字稿。絕不取代 live 索引、`store.db` 或逐字稿。<br>🇯🇵 SQLite `backup()` のスナップショットとトランスクリプト。稼働中の索引、`store.db`、逐字稿は置き換えません。 |
 | **Level_8<br>Cursor stores<br>實驗性清單<br>実験的一覧** | `Level_8_Cursor_Stores_Experimental/` | `/cursor/stores` when `--include-cursor-stores` is set | **Opt-in / 選擇性 / 任意**<br>🇬🇧 Contents are packed only with that flag. Restore does not write `/cursor/stores`.<br>🇹🇼 只有加上該旗標才打包內容。還原不寫回 `/cursor/stores`。<br>🇯🇵 そのフラグがあるときだけ中身を梱包します。復元は `/cursor/stores` を書きません。 |
@@ -91,7 +91,8 @@
 * 名為 `sand-subagent-*` 的目錄，除非 `--include-subagents` 或 `INCLUDE_SUBAGENTS=1`。
 * `/cursor/stores` 的檔案內容，除非 `--include-cursor-stores`。沒有這個旗標時，清單只記錄名稱。
 * 符號連結。打包時不跟隨。
-* 內含 `pyvenv.cfg` 的目錄，以及名為 `site-packages` 的目錄。`node_modules` 仍然排除。`INCLUDE_BULKY_DIRS=1` 不會把它們加回來。
+* 內含 `pyvenv.cfg` 的目錄，以及名為 `site-packages` 的目錄。`node_modules` 仍然排除。`INCLUDE_BULKY_DIRS=1` 不會把它們加回來。其套件清單會離線匯出到 `Level_2_System_Settings/python-envs/`（見 v2.3.0 一節）。
+* `credentials/` 資料夾與 v2.3.0 檔名規則（`*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`*.pem`、`*.key`），除非加上 `--include-secrets`。
 * `package-lock.json`、`tokenizer_config.json`、`tokenizer.json` 與打包程式裡的其他 lockfile 名稱會原樣複製，JSON 鍵值替換不會改寫它們。清單裡的密碼/Token 警告是每個資料夾、每種原因一列並附上數量，不是每個檔案一列。
 
 `--encrypt` 預設關閉，要加上旗標才會執行。它呼叫 OpenSSL `enc -aes-256-cbc -pbkdf2 -iter 200000 -salt`，再為該密文存放 HMAC-SHA256（先加密再做 MAC；MAC 金鑰是 PBKDF2-HMAC-SHA256、200000 次、自有 salt）。密碼放在 `UAWT_ENCRYPT_PASSPHRASE` 或提示輸入，不接受命令列參數。系統 `PATH` 上要有 OpenSSL。成功時刪除明文 zip、留下 `*.zip.enc`（權限 `600`）。失敗時保留明文 zip 並以錯誤結束。密碼錯誤或密文被改過時，還原會在寫出任何解密檔之前停止。舊版直接寫出的 OpenSSL 密文（沒有 `UAWTENC1` 標頭）會被拒絕，需要用這個版本重新打包。
@@ -107,7 +108,7 @@
 | `UAWT_PROFILE` | | 只有省略 `--profile` 時才使用 |
 | `UAWT_ENCRYPT_PASSPHRASE` | | 有 `--encrypt` 且此變數是空的時候改為提示輸入 |
 | `INCLUDE_SUBAGENTS` | | `0`；`1` 等同 `--include-subagents` |
-| `INCLUDE_BULKY_DIRS` | | `0` 略過名稱以 `.venv` 開頭的目錄；`1` 會打包那些目錄。含 `pyvenv.cfg` 的目錄、`site-packages` 與 `node_modules` 一律略過。其他值會結束程式 |
+| `INCLUDE_BULKY_DIRS` | | `0` 略過名稱含 `venv` 的目錄與 5 MB 以上的模型權重；`1`（或 `--include-bulky`）會打包那些內容。含 `pyvenv.cfg` 的目錄、`site-packages` 與 `node_modules` 一律略過。其他值會結束程式 |
 
 封裝程式不會替 Bot 查記憶。每個 Bot 要事先把 memory-drop 寫好。見 `AI_GUIDED_WIZARD_PROMPTS.md`。
 
@@ -120,17 +121,38 @@ python workspace_toolkit.py --mode restore --target-env existing \
 
 未指定 `--output-dir` 時，打包寫入 `./migration_output`。未指定 `--input-dir` 時，還原讀取 `./migration_output`。該路徑不存在時，還原改用目前目錄。
 
-**限制。** `tests/test_grok_profile.py` 用的是合成目錄。有一次在 Grok Bot 主機上做過唯讀打包，因而發現虛擬環境、`store.db` 與警告清單過大的問題；該主機上還沒有執行還原。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages、`/cursor/stores` 或正在使用的 `store.db`。`--encrypt` 沒有旗標就保持關閉。HMAC 會在解密前檢查密文。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。
+**限制。** Grok Bot 設定檔以合成目錄開發。有一次在 Grok Bot 主機上做過唯讀打包，因而發現虛擬環境、`store.db` 與警告清單過大的問題；該主機上還沒有執行還原。`/cursor/stores` 是實驗性路徑，沒有對過 live Pages 的實際配置。還原不會寫入 Pages、`/cursor/stores` 或正在使用的 `store.db`。`--encrypt` 沒有旗標就保持關閉。HMAC 會在解密前檢查密文。解密成功後，每個解出的檔案會對照清單裡的 SHA-256。分件封裝與虛擬環境鎖定檔（v2.3.0）只在合成目錄上檢查過；尚未在第二部電腦上拆分並還原真正數 GB 的封裝。
 
 ---
+
+### 大型封裝與打包前檢查（v2.3.0）
+
+兩種設定檔都適用。
+
+* **每份上限。** 每個 ZIP 都不會大於 `--max-part-mb`（十進位 MB：1 MB = 1,000,000 bytes），預設 90。大於 95、或小於等於 0 會被拒絕，程式以代碼 2 結束。放得下的封裝仍是一個 `<名稱>.zip`，與舊版相同。較大的封裝會寫成多個可獨立開啟的 `<名稱>_Part_01_of_03.zip`、`<名稱>_Part_02_of_03.zip`……每個分件都是普通 ZIP（不是分卷壓縮），使用相對路徑，並附有自己那一份檔案清單的 `package_manifest.json`。單一檔案大於上限時，會切成 `<路徑>.uawt-chunk-001-of-00N` 分段放在不同分件，每段有自己的 SHA-256。還原與檢查只要指向任一分件，就會在同一資料夾找出其餘分件、逐一驗證、接回分段，並以原檔 SHA-256 核對。缺少分件時，在寫入任何東西之前以代碼 2 停止。`--encrypt` 會加密每一個分件。
+* **機密檔名。** Level_0 守門另外只依檔名排除（不會開啟檔案）：檔名含 `secret`、`token`、`credential`、`cookie`；`*key*.json`；`gateway.json`；`mcp_config.json`；`.env`；`*.pem`；`*.key`；以及整個 `credentials/`、`.credentials/` 資料夾。文件與程式碼（`.md`、`.py`、`.ipynb` 等）不受這些檔名規則排除，所以 `Secretariat.md`、`token_budget.md` 仍會打包，並照常做內容掃描。`tokenizer*.json`、各種 lockfile、`keybindings.json` / `keyboard*.json` 會保留。Antigravity 的 MCP 資料夾維持舊行為：只遮蔽數值，不整檔排除。
+* **虛擬環境。** 名稱含 `venv` 的資料夾（包括 `.venv`）、內含 `pyvenv.cfg` 的資料夾，以及 `site-packages` 都不會打包。每個這類環境會用它自己的 Python 執行 `uv pip freeze --offline`；沒有 uv 或失敗時改用 `<venv python> -m pip freeze`，寫成 `Level_2_System_Settings/python-envs/requirements-<上層>_<名稱>.txt`。另外以 `pip list --user` 寫出 `pip-user-packages.txt`。過程不連網（`PIP_NO_INDEX=1`、`UV_OFFLINE=1`）。失敗會記錄在 `package_manifest.json` 的 `env_locks`，不會中止打包。`--skip-env-lock` 可關閉此功能。還原不會安裝任何套件：鎖定檔留在封裝內（Antigravity）或 `.grok-restore-incoming/`（Grok），由你自行 `pip install -r`。
+* **重複的技能與規則。** `SKILL.md`、`AGENTS.md`、`CLAUDE.md`、`.cursorrules`、`.clinerules` 若在多個位置出現，審計會列出各副本（內容相同，或同名技能內容不同），並請你決定哪一份是正本。所有副本照樣打包；`-y` 不會因此停止。清單會存入 manifest 的 `duplicates`。
+* **過長路徑。** 封裝內最長路徑超過 200 個字元時會顯示警告，manifest 記錄 `long_paths`。在 Windows 請解壓到磁碟根目錄附近（例如 `C:\GB\`），或開啟 `LongPathsEnabled`。
+* **不覆寫。** 輸出檔名（`.zip`、`.zip.enc` 或任一分件名稱）已存在時，新封裝會命名為 `_v2`、`_v3`……`--encrypt` 不會取代已存在的 `.zip.enc`。
+* **模型權重。** 5 MB 以上的 `.onnx`、`.pt`、`.pth`、`.ckpt`、`.safetensors`、`.gguf`、`.bin` 會歸入 Level 5（不打包），除非加上 `--include-bulky`。`--include-bulky` 等同 `INCLUDE_BULKY_DIRS=1`，在 Grok 設定檔中也會帶回沒有 `pyvenv.cfg` 的 `.venv` 類資料夾。
+
+```bash
+python workspace_toolkit.py --mode pack --max-part-mb 45      # 較小的分件
+python workspace_toolkit.py --mode pack --include-bulky       # 保留模型權重
+python workspace_toolkit.py --mode restore --input-dir migration_output/packages/Kit_Part_01_of_03.zip
+```
+
+---
+
 
 ## 📊 Visual Architecture Flow / 視覺化架構流程圖 / アーキテクチャフロー
 
 ```mermaid
 flowchart TD
     subgraph T0 ["[Phase 1: Export & Snapshot Pack / 匯出與快照封裝 / エクスポートとパッケージ化] (workspace_toolkit.py --mode pack)"]
-        Scan["1. Level_0 Secret Scan / 機密掃描 / 機密スキャン<br>(Detect .env & Tokens, Exclude by default / 預設排除 / 既定で除外)"] --> Audit["2. Level_1-5 Asset Audit / 階梯審計 / 階層監査<br>(Real sizes per level / 實際容量 / 実容量)"]
-        Audit --> Pack["3. Symmetrical Level_X Packaging / 對齊封裝 / 対称パッケージ化<br>• Core: Level_1_to_4_Core_Workspace_*.zip (Atomic / 單檔原子化)<br>• Level 5: counted only, not packed"]
+        Scan["1. Level_0 Secret Scan / 機密掃描 / 機密スキャン<br>(Detect .env & Tokens, Exclude by default / 預設排除 / 既定で除外)"] --> Audit["2. Level_1-5 Asset Audit / 階梯審計 / 階層監査<br>(Real sizes per level / 實際容量 / 実容量)<br>+ venv locks, duplicate rules, long paths"]
+        Audit --> Pack["3. Symmetrical Level_X Packaging / 對齊封裝 / 対称パッケージ化<br>• Core: Level_1_to_4_Core_Workspace_*.zip, ≤ --max-part-mb (default 90 MB)<br>• Larger: standalone _Part_NN_of_MM.zip, each with its own manifest<br>• Level 5: counted only, not packed"]
         Pack --> Manifest["4. Generate Manifest / 產出資產清單 / マニフェスト生成<br>(package_manifest.json with Host Fingerprint & SHA-256 Checksum)"]
     end
 
@@ -223,7 +245,9 @@ universal-agent-workspace-toolkit/
 ├── toolkit_restore.py            # Impact Report, Snapshot & Deployer (衝擊評估與還原引擎 / リストアエンジン)
 ├── toolkit_grok.py               # Grok Bot profile: scan, pack, conservative restore
 ├── toolkit_crypto.py             # Optional --encrypt: AES-256-CBC plus HMAC-SHA256 (off by default)
-├── tests/                        # Synthetic Grok box + Antigravity regression
+├── toolkit_parts.py              # Part cap, standalone _Part_NN_of_MM.zip, re-join, long paths, _v2 naming
+├── toolkit_preflight.py          # Offline venv requirement locks, duplicate skill/rules detection
+├── CHANGELOG.md                  # Release notes
 ├── SKILL.md                      # Antigravity Skill Specification (技能定義規範 / スキル定義仕様)
 ├── AGENTS.md                     # Universal Agent Bootstrap Directives (智能體自啟動憲法 / 起動指示書)
 ├── AI_GUIDED_WIZARD_PROMPTS.md   # Natural Language Prompt Templates (自然語言引導詞 / 対話プロンプト集)
@@ -241,5 +265,10 @@ universal-agent-workspace-toolkit/
 * **還原**：只使用找到的最新封裝（依 `created_at`），解壓到每次全新的暫存資料夾並於結束後刪除；不論是否加 `-y`，都會先為可能被覆寫的內容建立還原快照。同名技能檔案與工作區文件會被覆寫；`existing` 模式下 `AGENTS.md` 與 MCP 設定保留，封裝版本另存為 `.incoming`。
 * **IDE 設定**：還原時會在目標電腦已安裝的 IDE 設定中加入 `"security.promptForLocalFileProtocolHandling": false`（可用 `--skip-ide-protocol-patch` 關閉）。不是純 JSON 的檔案（例如含註解的 VS Code 設定）不會被修改，只會印出要手動加入的行；修改前會先備份為 `settings.json.bak-<時間>`。
 * **Level 5** 大檔只在審計表計數，不打包。
-* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔由 `tests/test_grok_profile.py` 以合成目錄測試。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試；自動化測試僅在 Linux 執行。
+* **每份上限（v2.3.0）**：每個 ZIP 不超過 `--max-part-mb`（預設 90，十進位上限 95）。更大的封裝會變成可獨立開啟的 `_Part_NN_of_MM.zip`，請放在同一資料夾。已存在的輸出不會被覆寫（改用 `_v2`、`_v3`……）。
+* **狀態**：已在 Google Antigravity 目錄結構驗證。Grok Bot 設定檔以合成目錄檢查過。另有一次在 Grok Bot 主機上做過唯讀打包；該主機上還沒有執行還原。`/cursor/stores` 清單為實驗性。其他 Agent 尚未測試。
 
+
+## 授權
+
+MIT，詳見 [LICENSE](LICENSE)。

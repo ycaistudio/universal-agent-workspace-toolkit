@@ -4,6 +4,7 @@ Implements Pre-Restore Impact Assessment, Rollback Snapshot, and Safe Deployment
 
 Every restore extracts into a fresh temporary directory, so a previous run can never leak
 into the next one. Only the newest package is used; packages are never merged.
+The parts of one split package are a single package.
 """
 
 import os
@@ -15,6 +16,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from toolkit_scanner import win_p, calculate_sha256
+from toolkit_parts import join_chunks, sibling_parts
 
 IDE_PATCH = {"security.promptForLocalFileProtocolHandling": False}
 MCP_PREFIX = "Level_2_System_Settings/mcp/"
@@ -26,10 +28,13 @@ def _read_manifest(zip_path):
 
 
 def find_packages(input_path):
-    """A .zip file itself, or the Level_*.zip files in <dir>/packages and <dir>."""
+    """A .zip file itself, or the Level_*.zip files in <dir>/packages and <dir>.
+
+    A single ``*_Part_NN_of_MM.zip`` also brings in the other parts beside it.
+    """
     p = Path(input_path)
     if p.is_file() and p.suffix.lower() == ".zip":
-        return [p]
+        return sibling_parts(p)
     found = []
     for base in (p / "packages", p):
         if base.is_dir():
@@ -37,9 +42,23 @@ def find_packages(input_path):
     return sorted(set(found))
 
 
+def _verify_into(staging, file_manifest, result, verified):
+    for rel_p, meta in file_manifest.items():
+        local_f = staging / rel_p
+        if not local_f.is_file():
+            result["corrupted_files"].append((rel_p, "Missing"))
+        elif calculate_sha256(local_f) == meta.get("sha256"):
+            verified.add(rel_p)
+        else:
+            result["corrupted_files"].append((rel_p, "SHA-256 mismatch"))
+
+
 def unpack_and_audit(input_path):
     """Pick the newest package, extract it to a fresh temp dir, verify SHA-256 for every file.
 
+    A split package (``*_Part_NN_of_MM.zip``) counts as one package. Every part
+    must be present; all parts are extracted, verified, and files that were
+    split across parts are re-joined and checked against their full SHA-256.
     The caller owns the returned staging_dir and must delete it (see cleanup_staging).
     """
     candidates, ignored = [], []
@@ -51,28 +70,58 @@ def unpack_and_audit(input_path):
             ignored.append((zp, f"unreadable package ({type(e).__name__})"))
 
     result = {"staging_dir": None, "manifest": {}, "package": None, "ignored": ignored,
-              "verified_files": 0, "corrupted_files": [], "error": None}
+              "verified_files": 0, "corrupted_files": [], "error": None, "parts": []}
     if not candidates:
         result["error"] = f"No valid package (Level_*.zip) found in {input_path}"
         return result
 
     candidates.sort(key=lambda c: (c[0], c[1]))
     _, _, chosen, manifest = candidates[-1]
-    ignored.extend((c[2], "older package, not used") for c in candidates[:-1])
+    split = manifest.get("split")
+    if split:
+        members = [c for c in candidates if (c[3].get("split") or {}).get("set_id") == split.get("set_id")
+                   and (c[3].get("split") or {}).get("parts") == split.get("parts")]
+        ignored.extend((c[2], "older package, not used") for c in candidates if c not in members)
+        by_part = {}
+        for c in members:
+            by_part.setdefault(c[3]["split"]["part"], c)
+        count = int(split.get("parts", 0))
+        missing = [n for n in range(1, count + 1) if n not in by_part]
+        if missing:
+            names = split.get("part_names") or []
+            labels = ", ".join(names[n - 1] if n - 1 < len(names) else str(n) for n in missing)
+            result["error"] = (f"Split package {split.get('set_id')} is incomplete: "
+                               f"missing part(s) {', '.join(map(str, missing))} of {count} ({labels}). "
+                               "Copy every part into the same folder.")
+            result["package"] = chosen
+            return result
+        ordered = [by_part[n] for n in range(1, count + 1)]
+        manifest = dict(ordered[0][3])
+        staging = Path(tempfile.mkdtemp(prefix="uawt_restore_"))
+        result.update(staging_dir=staging, package=ordered[0][2], parts=[c[2] for c in ordered])
+        merged = {}
+        for c in ordered:
+            with zipfile.ZipFile(c[2]) as z:
+                z.extractall(staging)
+            merged.update(c[3].get("file_manifest", {}))
+        verified = set()
+        _verify_into(staging, merged, result, verified)
+        final, bad = join_chunks(staging, merged, split.get("chunked_files", {}), verified)
+        result["corrupted_files"].extend(bad)
+        manifest["file_manifest"] = final
+        result["manifest"] = manifest
+        result["verified_files"] = sum(1 for rel in final if rel in verified or rel in split.get("chunked_files", {}))
+        return result
 
+    ignored.extend((c[2], "older package, not used") for c in candidates[:-1])
     staging = Path(tempfile.mkdtemp(prefix="uawt_restore_"))
-    result.update(staging_dir=staging, manifest=manifest, package=chosen)
+    result.update(staging_dir=staging, manifest=manifest, package=chosen, parts=[chosen])
     with zipfile.ZipFile(chosen) as z:
         z.extractall(staging)
 
-    for rel_p, meta in manifest.get("file_manifest", {}).items():
-        local_f = staging / rel_p
-        if not local_f.is_file():
-            result["corrupted_files"].append((rel_p, "Missing"))
-        elif calculate_sha256(local_f) == meta.get("sha256"):
-            result["verified_files"] += 1
-        else:
-            result["corrupted_files"].append((rel_p, "SHA-256 mismatch"))
+    verified = set()
+    _verify_into(staging, manifest.get("file_manifest", {}), result, verified)
+    result["verified_files"] = len(verified)
     return result
 
 

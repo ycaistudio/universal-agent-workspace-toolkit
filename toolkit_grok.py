@@ -15,7 +15,6 @@ import shutil
 import sqlite3
 import sys
 import uuid
-import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
@@ -23,12 +22,18 @@ from urllib.parse import quote
 from toolkit_scanner import (
     EXCLUDED_DIRS,
     HIGH_CONF_RE,
+    LOCKFILE_NAMES,
     PRIVATE_KEY_RE,
     calculate_sha256,
     classify_file,
+    model_weight_reason,
     redact_mcp_json,
+    secret_dir_reason,
+    secret_name_reason,
     win_p,
 )
+from toolkit_parts import DEFAULT_PART_BYTES, write_package
+from toolkit_preflight import LOCK_DIR, emit_env_locks, find_duplicates
 
 L1 = "Level_1_Agent_Directives"
 L2 = "Level_2_System_Settings"
@@ -56,22 +61,9 @@ GROK_SECRET_FILENAMES = {
     "teach-queue-key.json",
 }
 SKIP_DIR_NAMES = set(EXCLUDED_DIRS) | {"managed-skills", "plugin-skills", ".cache"}
-# Packed as-is. JSON redaction treats any key containing "token" as a secret,
-# which rewrites tokenizer_config.json and similar lockfiles.
-LOCKFILE_NAMES = {
-    "package-lock.json",
-    "npm-shrinkwrap.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-    "pnpm-lock.yml",
-    "composer.lock",
-    "cargo.lock",
-    "poetry.lock",
-    "gemfile.lock",
-    "packages.lock.json",
-    "tokenizer_config.json",
-    "tokenizer.json",
-}
+# LOCKFILE_NAMES (tokenizer files, package lockfiles) now lives in toolkit_scanner and is
+# re-exported here. They are packed as-is: JSON redaction treats any key containing
+# "token" as a secret, and the v2.3.0 name gate must not drop tokenizer*.json.
 SQLITE_SIDECARS = {"store.db-wal", "store.db-shm"}
 # Folder and archive names from the grok-bot-export / virtual-office exporter.
 # Matched only so a leftover export inside the workspace is not packed again.
@@ -180,9 +172,11 @@ def _heavy(path, size):
     return Path(path).suffix.lower() in HEAVY_SUFFIXES
 
 
-def _skip_dir_reason(full, name, include_bulky, include_subagents, exclude_roots):
+def _skip_dir_reason(full, name, include_bulky, include_subagents, exclude_roots, secrets_ok=False):
     if full.is_symlink():
         return "symlink (not followed)"
+    if not secrets_ok and secret_dir_reason(name):
+        return secret_dir_reason(name)
     if name in SKIP_DIR_NAMES or name in {"managed-skills", "plugin-skills"}:
         if name in {"managed-skills", "plugin-skills"}:
             return "platform-managed skills are not user workflows"
@@ -204,13 +198,15 @@ def _skip_dir_reason(full, name, include_bulky, include_subagents, exclude_roots
         return "unreadable directory"
     if not include_bulky and name.startswith(".venv"):
         return "bulky directory"
+    if not include_bulky and "venv" in name.lower():
+        return "virtualenv-like directory (*venv*)"
     for root in exclude_roots:
         if root and _under(full, root):
             return "excluded root"
     return None
 
 
-def _iter_files(root, include_bulky, include_subagents, exclude_roots, skipped):
+def _iter_files(root, include_bulky, include_subagents, exclude_roots, skipped, secrets_ok=False):
     root = Path(root)
     if not root.exists():
         return
@@ -224,7 +220,7 @@ def _iter_files(root, include_bulky, include_subagents, exclude_roots, skipped):
         kept = []
         for name in list(dirnames):
             full = Path(dirpath) / name
-            reason = _skip_dir_reason(full, name, include_bulky, include_subagents, exclude_roots)
+            reason = _skip_dir_reason(full, name, include_bulky, include_subagents, exclude_roots, secrets_ok)
             if reason:
                 skipped.append((full, reason))
                 continue
@@ -271,11 +267,13 @@ def _jsonl_stats(path):
     return {"lines": lines, "facts": facts, "invalid": invalid}
 
 
-def _empty_assets(paths, include_secrets):
+def _empty_assets(paths, include_secrets, include_bulky=False):
     return {
         "profile": "grok",
         "paths": paths,
         "include_secrets": include_secrets,
+        "include_bulky": include_bulky,
+        "venvs": [],
         "files": [],
         "excluded": [],
         "flagged": [],
@@ -304,7 +302,7 @@ def _add_file(assets, fp, level, arc, include_secrets, include_cursor_payload=Fa
         assets["skipped"].append((fp, "duplicate archive path"))
         return
     if not include_secrets:
-        reason = grok_secret_reason(fp, paths["agent_data"])
+        reason = grok_secret_reason(fp, paths["agent_data"]) or secret_name_reason(fp)
         if reason:
             assets["excluded"].append((fp, reason))
             return
@@ -339,6 +337,10 @@ def _add_file(assets, fp, level, arc, include_secrets, include_cursor_payload=Fa
         return
     if level not in NEVER_DEMOTE and _heavy(fp, size):
         level = L5
+    if not assets.get("include_bulky") and level != L5 and model_weight_reason(fp, size):
+        # Model weights are rebuilt or re-downloaded, not migrated (v2.3.0).
+        level = L5
+        assets["flagged"].append((fp, model_weight_reason(fp, size)))
     assets["seen"].add((level, arc))
     assets["files"].append({
         "src": fp,
@@ -358,7 +360,7 @@ def _collect_agent(assets, agent_dir, include_secrets, include_bulky, include_su
     name = profile.get("name") or aid
     record = {"id": aid, "name": name, "kind": kind, "routines": 0}
     assets["agents"].append(record)
-    for fp in _iter_files(agent_dir, include_bulky, include_subagents, exclude_roots, assets["skipped"]):
+    for fp in _iter_files(agent_dir, include_bulky, include_subagents, exclude_roots, assets["skipped"], include_secrets):
         rel = fp.relative_to(agent_dir).as_posix()
         top = rel.split("/", 1)[0]
         filename = Path(rel).name
@@ -499,7 +501,7 @@ def scan_grok_assets(paths, include_secrets=False, include_cursor_stores=False,
             f"Grok Bot profile selected, but agent-data was not found at {agent_data}. "
             "Set GROK_AGENT_DATA or AGENT_DATA."
         )
-    assets = _empty_assets(paths, include_secrets)
+    assets = _empty_assets(paths, include_secrets, include_bulky)
     exclude_roots = [Path(p) for p in (exclude_roots or []) if p]
     memory_root = Path(paths["memory_drop"])
     workspace = Path(paths["workspace"])
@@ -510,7 +512,7 @@ def scan_grok_assets(paths, include_secrets=False, include_cursor_stores=False,
     if not workspace.is_dir():
         assets["warnings"].append(f"workspace directory not found: {workspace}")
     else:
-        for fp in _iter_files(workspace, include_bulky, include_subagents, exclude_roots, assets["skipped"]):
+        for fp in _iter_files(workspace, include_bulky, include_subagents, exclude_roots, assets["skipped"], include_secrets):
             rel = fp.relative_to(workspace).as_posix()
             if fp.name in DIRECTIVE_NAMES:
                 _add_file(assets, fp, L1, f"workspace/{rel}", include_secrets)
@@ -534,14 +536,14 @@ def scan_grok_assets(paths, include_secrets=False, include_cursor_stores=False,
             if is_agent:
                 _collect_agent(assets, child, include_secrets, include_bulky, include_subagents, exclude_roots)
             else:
-                for fp in _iter_files(child, include_bulky, include_subagents, exclude_roots, assets["skipped"]):
+                for fp in _iter_files(child, include_bulky, include_subagents, exclude_roots, assets["skipped"], include_secrets):
                     rel = fp.relative_to(child).as_posix()
                     _add_file(assets, fp, L2, f"platform/{child.name}/{rel}", include_secrets)
 
     workflows = agent_data / "workflows"
     if workflows.is_dir():
         names = set()
-        for fp in _iter_files(workflows, include_bulky, include_subagents, exclude_roots, assets["skipped"]):
+        for fp in _iter_files(workflows, include_bulky, include_subagents, exclude_roots, assets["skipped"], include_secrets):
             rel = fp.relative_to(workflows).as_posix()
             if rel.split("/", 1)[0] not in names and "/" in rel:
                 names.add(rel.split("/", 1)[0])
@@ -552,13 +554,13 @@ def scan_grok_assets(paths, include_secrets=False, include_cursor_stores=False,
 
     projects = agent_data / "projects"
     if projects.is_dir():
-        for fp in _iter_files(projects, include_bulky, include_subagents, exclude_roots, assets["skipped"]):
+        for fp in _iter_files(projects, include_bulky, include_subagents, exclude_roots, assets["skipped"], include_secrets):
             rel = fp.relative_to(projects).as_posix()
             _add_file(assets, fp, L4, f"shared/projects/{rel}", include_secrets)
 
     user_memory = agent_data / "user-memory"
     if user_memory.is_dir():
-        for fp in _iter_files(user_memory, include_bulky, include_subagents, exclude_roots, assets["skipped"]):
+        for fp in _iter_files(user_memory, include_bulky, include_subagents, exclude_roots, assets["skipped"], include_secrets):
             rel = fp.relative_to(user_memory).as_posix()
             _add_file(assets, fp, L6, f"user-memory/{rel}", include_secrets)
 
@@ -573,7 +575,7 @@ def scan_grok_assets(paths, include_secrets=False, include_cursor_stores=False,
 
     transcripts = agent_data / "agent-transcripts"
     if transcripts.is_dir():
-        for fp in _iter_files(transcripts, include_bulky, include_subagents, exclude_roots, assets["skipped"]):
+        for fp in _iter_files(transcripts, include_bulky, include_subagents, exclude_roots, assets["skipped"], include_secrets):
             rel = fp.relative_to(transcripts).as_posix()
             _add_file(assets, fp, L7, f"agent-transcripts/{rel}", include_secrets)
 
@@ -588,7 +590,7 @@ def scan_grok_assets(paths, include_secrets=False, include_cursor_stores=False,
         assets["warnings"].append(f"search-index.db not found at {paths['search_index']}")
 
     if memory_root.is_dir():
-        for fp in _iter_files(memory_root, True, True, [], assets["skipped"]):
+        for fp in _iter_files(memory_root, True, True, [], assets["skipped"], include_secrets):
             rel = fp.relative_to(memory_root).as_posix()
             _add_file(assets, fp, L6, rel, include_secrets)
     assets["memory"] = _summarize_memory(memory_root, [a["id"] for a in assets["agents"]])
@@ -596,13 +598,26 @@ def scan_grok_assets(paths, include_secrets=False, include_cursor_stores=False,
     assets["experimental"] = {"cursor_stores": list_cursor_stores(paths["cursor_stores"])}
     if include_cursor_stores and Path(paths["cursor_stores"]).is_dir():
         assets["experimental"]["cursor_stores"]["packed"] = True
-        for fp in _iter_files(paths["cursor_stores"], include_bulky, include_subagents, [], assets["skipped"]):
+        for fp in _iter_files(paths["cursor_stores"], include_bulky, include_subagents, [], assets["skipped"], include_secrets):
             rel = fp.relative_to(paths["cursor_stores"]).as_posix()
             _add_file(assets, fp, L8, rel, include_secrets)
 
     for level in LEVEL_ORDER:
         assets["sizes_mb"][level] = sum(item["size"] for item in assets["files"] if item["level"] == level) / (1024 * 1024)
     assets["t_core_mb"] = sum(assets["sizes_mb"][level] for level in (L1, L2, L3))
+    # Credential folders are reported as excluded (paths only); virtualenvs are frozen at pack time.
+    kept = []
+    for path, reason in assets["skipped"]:
+        if reason.startswith("credential directory"):
+            assets["excluded"].append((path, reason))
+            continue
+        if reason.startswith("virtualenv") or (reason == "bulky directory" and (Path(path) / "pyvenv.cfg").is_file()):
+            assets["venvs"].append(path)
+        kept.append((path, reason))
+    assets["skipped"] = kept
+    # Same skill or rules tree in more than one place: the user picks the canonical copy.
+    assets["duplicates"] = find_duplicates([item["src"] for item in assets["files"]],
+                                           display=lambda p: _display(p, paths))
     return assets
 
 
@@ -697,8 +712,14 @@ def summarize_flags(entries, paths):
     ]
 
 
-def run_grok_pack(assets, output_base, user_home, encrypted=False):
-    """Pack a scanned Grok box. Level_5 is inventoried and not written into the zip."""
+def run_grok_pack(assets, output_base, user_home, encrypted=False,
+                  max_part_bytes=DEFAULT_PART_BYTES, env_lock=True):
+    """Pack a scanned Grok box. Level_5 is inventoried and not written into the zip.
+
+    v2.3.0: zips are capped at ``max_part_bytes`` and split into standalone parts
+    above it; outputs are never overwritten; virtualenv requirement locks are
+    written to Level_2_System_Settings/python-envs.
+    """
     include_secrets = assets["include_secrets"]
     now = datetime.now()
     ts_str = now.strftime("%Y%m%d_%H%M%S")
@@ -809,18 +830,26 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
                 "source": info["src"],
             })
 
+        env_locks = None
+        if env_lock:
+            lock_dir = staging_dir / L2 / LOCK_DIR
+            env_locks = emit_env_locks(assets.get("venvs", []), lock_dir, display=lambda p: _display(p, paths))
+            if lock_dir.is_dir():
+                for lock in sorted(lock_dir.iterdir()):
+                    _record(staging_dir, lock, 2, file_manifest)
+                    level_counts[L2] += 1
+
         excluded = [{"path": _display(p, paths), "reason": r} for p, r in assets["excluded"]]
         flagged_count = len(assets["flagged"])
         flagged = summarize_flags(assets["flagged"], paths)
         skipped = [{"path": _display(p, paths), "reason": r} for p, r in assets["skipped"]]
         has_level8 = level_counts[L8] > 0
-        zip_filename = (
-            f"Level_1_to_8_Grok_Bot_{ts_str}.zip" if has_level8 else f"Level_1_to_7_Grok_Bot_{ts_str}.zip"
+        zip_stem = (
+            f"Level_1_to_8_Grok_Bot_{ts_str}" if has_level8 else f"Level_1_to_7_Grok_Bot_{ts_str}"
         )
-        zip_path = packages_dir / zip_filename
         total_size_mb = sum(item["size"] for item in file_manifest.values()) / (1024 * 1024)
         manifest_doc = {
-            "manifest_version": "v2.2.0",
+            "manifest_version": "v2.3.0",
             "profile": "grok",
             "tracking_id": tracking_id,
             "created_at": now.isoformat(),
@@ -848,6 +877,8 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
             "conversations": conversations,
             "experimental": assets["experimental"],
             "warnings": pack_warnings,
+            "env_locks": env_locks,
+            "duplicates": assets.get("duplicates", []),
             "restore_policy": {
                 "direct": [
                     "Level_4 paths under workspace/ restore into the target workspace",
@@ -866,27 +897,18 @@ def run_grok_pack(assets, output_base, user_home, encrypted=False):
             },
             "file_manifest": file_manifest,
         }
-        (staging_dir / "package_manifest.json").write_text(
-            json.dumps(manifest_doc, indent=2, ensure_ascii=False), encoding="utf-8")
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for dirpath, _, filenames in os.walk(staging_dir):
-                for filename in filenames:
-                    fp = Path(dirpath) / filename
-                    zipf.write(win_p(fp), arcname=fp.relative_to(staging_dir).as_posix())
-        with zipfile.ZipFile(zip_path, "r") as zipf:
-            names = set(zipf.namelist())
-            for rel in file_manifest:
-                if rel not in names:
-                    raise RuntimeError(f"Integrity check failed: missing {rel} in zip")
-        try:
-            os.chmod(zip_path, 0o600)
-        except OSError:
-            pass
+        # One zip, or standalone parts above the cap. Self-checked, chmod 600, never overwrites.
+        zip_paths = write_package(staging_dir, manifest_doc, packages_dir, zip_stem, max_part_bytes, private=True)
+        zip_path = zip_paths[0]
     finally:
         shutil.rmtree(win_p(staging_dir), ignore_errors=True)
 
     return {
         "zip_path": zip_path,
+        "zip_paths": zip_paths,
+        "long_paths": manifest_doc.get("long_paths"),
+        "env_locks": env_locks,
+        "duplicates": manifest_doc["duplicates"],
         "tracking_id": tracking_id,
         "total_files": len(file_manifest),
         "total_size_mb": round(total_size_mb, 2),
