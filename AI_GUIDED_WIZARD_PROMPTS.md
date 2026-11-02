@@ -38,13 +38,15 @@ Create $MEMORY_DROP/agents/<your-agent-uuid>/ and write the bot's memories there
 1. 自動調用 `python workspace_toolkit.py --mode pack` 執行全域掃描。
    - 若環境是 Grok Bot（存在 agent-data，或我指定 `--profile grok`），先確認我已完成上一節的 memory-drop；沒有匯出的 Bot 要在報告裡標成未匯出，不要假裝記憶已完整。
 2. 進行【Level_0 機密憑證探測】：
-   - 清楚列出偵測到之 .env、Token、API Key、私鑰儲存路徑；
+   - 清楚列出偵測到之 .env、Token、API Key、私鑰儲存路徑，以及只依檔名排除的 `*secret*`、`*token*`、`*credential*`、`*cookie*`、`*key*.json`、`*.pem`、`*.key`、`credentials/`（不開啟這些檔案）；
    - Grok Bot 另列 `box-secrets.json`、`host-secrets.json`、`chrome-cookie-seed.json`、`gateway.json`、`teach-queue-key.json` 與 agent-data 頂層 `*-secrets.json`；
    - 提醒：預設不打包密碼、API Key 與私鑰；如需帶到新電腦，請詢問我是否加上 --include-secrets。可選 `--encrypt`（需要 OpenSSL，密碼用 `UAWT_ENCRYPT_PASSPHRASE` 或互動輸入，不要寫進命令列）。
 3. 輸出【資產審計總冊】：
    - Antigravity：列出 Level_1 憲法指引、Level_2 設定、Level_3 技能庫、Level_4 文檔之數量與大小；
    - Grok Bot：另列 Level_6 memory-drop 與 Level_7 對話快照（唯讀），並註明 `/cursor/stores` 若有列出則為實驗性、預設不打包；
-   - 回報中樞核心（Level_1~4）的實際容量，並打包成單一 ZIP（Level_5 不打包）。
+   - 回報中樞核心（Level_1~4）的實際容量。每個 ZIP 不超過 `--max-part-mb`（預設 90，最大 95）；超過時會拆成可獨立開啟的 `_Part_NN_of_MM.zip`，請告訴我分件數目（Level_5 與 5 MB 以上模型權重不打包，除非我要求 `--include-bulky`）；
+   - 若列出重複的技能／規則檔，請問我哪一份是正本；若有長路徑警告，提醒我在 Windows 解壓到 `C:\GB\` 或開啟 LongPathsEnabled；
+   - 回報虛擬環境的 requirements 鎖定檔（`python-envs/`）是否成功匯出。
 4. 詢問我的自訂輸出目錄（預設 ./migration_output/packages/）。
 5. 執行封裝並完成 SHA-256 出庫自檢，回報 Tracking ID 與封裝檔名。
 ```
@@ -62,7 +64,7 @@ Create $MEMORY_DROP/agents/<your-agent-uuid>/ and write the bot's memories there
 請嚴格遵循【清單驗真、主機指紋判定、環境狀態問詢、兩次確認防誤覆蓋門禁】原則執行：
 
 1. 自動調用 `python workspace_toolkit.py --mode restore` 執行點驗。
-2. 檢查 `package_manifest.json` 與所有 Zip 封包之 SHA-256，確認收齊無損毀。
+2. 檢查 `package_manifest.json` 與所有 Zip 封包之 SHA-256，確認收齊無損毀。若是 `_Part_NN_of_MM.zip` 分件，確認全部分件都在同一資料夾；缺件時停止並告訴我缺哪一份。
 3. 比對主機指紋，自動識別【本機快照復原】還是【跨機遷移（開啟路徑自癒）】。
 4. 詢問我當前環境是【全新新裝 AI Agent】還是【舊有現存運行中環境】。
 5. 產出【部署前衝擊評估報告 (Impact Assessment)】：
