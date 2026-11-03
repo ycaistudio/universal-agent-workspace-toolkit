@@ -163,45 +163,67 @@ def _open_envelope(enc_path, passphrase):
 def encrypt_package(zip_path, passphrase):
     """Encrypt ``zip_path`` to ``zip_path.enc`` and delete the plaintext zip.
 
-    On failure the plaintext zip is left in place and any partial ciphertext is removed.
+    Transactionally commits; on failure the plaintext zip is left in place
+    and any partial ciphertext is removed.
     """
-    zip_path = Path(zip_path)
-    enc_path = Path(str(zip_path) + ".enc")
-    if enc_path.exists():
-        # v2.3.0: an earlier encrypted kit is never overwritten.
-        raise EncryptionError(f"{enc_path.name} already exists; refusing to overwrite it")
-    cipher_temp = Path(str(enc_path) + ".part")
+    res = encrypt_packages([zip_path], passphrase)
+    return res[0]
+
+
+def _commit_file(src, dst):
+    """Atomically commit a staged temporary file to its final destination."""
     try:
-        _run_openssl(zip_path, cipher_temp, passphrase, decrypt=False)
-        _seal(cipher_temp, enc_path, passphrase)
-    except EncryptionError:
-        if enc_path.exists():
-            enc_path.unlink()
-        raise
-    finally:
-        if cipher_temp.exists():
-            cipher_temp.unlink()
-    zip_path.unlink()
-    return enc_path
+        os.replace(src, dst)
+    except OSError as replace_err:
+        try:
+            shutil.move(str(src), str(dst))
+        except Exception:
+            raise replace_err
+    try:
+        os.chmod(dst, 0o600)
+    except OSError:
+        pass
 
 
 def encrypt_packages(zip_paths, passphrase):
-    """Encrypt every part of a package transactionally (REL-02).
+    """Encrypt every part of a package transactionally (REL-02 / v2.3.1 Reliability).
 
-    All parts are first encrypted to temporary destinations and verified.
-    Only after ALL parts succeed are the plaintext zips removed and the
-    encrypted packages committed. On failure of any part, all temporary
-    files are cleaned up and original plaintext zips remain intact.
+    Phased processing:
+      Phase 1: Pre-flight validation (target collision & source existence checks).
+      Phase 2: Staging & Verification (encrypt to temporary files and verify HMAC/envelope).
+      Phase 3: Multi-File Atomic Commit (commit all parts; if any fail, rollback committed parts).
+      Phase 4: Cleanup (only delete plaintext ZIPs after ALL parts are committed successfully).
     """
-    temp_records = []
+    if not zip_paths:
+        return []
+
+    _require_passphrase(passphrase)
+    binary = openssl_path()
+    if not binary:
+        raise EncryptionError(
+            "openssl was not found on PATH. --encrypt needs the OpenSSL enc "
+            "command (AES-256-CBC, PBKDF2, 200000 iterations). "
+            "Install OpenSSL or rerun without --encrypt."
+        )
+
+    # Phase 1: Pre-flight validation
+    items = []
+    for zp in zip_paths:
+        zp = Path(zp)
+        if not zp.is_file():
+            raise EncryptionError(f"Source package not found: {zp}")
+        enc_final = Path(str(zp) + ".enc")
+        if enc_final.exists():
+            raise EncryptionError(f"{enc_final.name} already exists; refusing to overwrite it")
+        items.append((zp, enc_final))
+
+    # Phase 2: Staging & Verification
+    staged = []
     try:
-        for zp in zip_paths:
-            zp = Path(zp)
-            enc_final = Path(str(zp) + ".enc")
-            if enc_final.exists():
-                raise EncryptionError(f"{enc_final.name} already exists; refusing to overwrite it")
-            enc_temp = Path(str(zp) + f".enc_tmp_{uuid.uuid4().hex[:8]}")
-            cipher_temp = Path(str(zp) + f".cipher_tmp_{uuid.uuid4().hex[:8]}")
+        for zp, enc_final in items:
+            token = uuid.uuid4().hex[:8]
+            enc_temp = Path(str(zp) + f".enc_tmp_{token}")
+            cipher_temp = Path(str(zp) + f".cipher_tmp_{token}")
             try:
                 _run_openssl(zp, cipher_temp, passphrase, decrypt=False)
                 _seal(cipher_temp, enc_temp, passphrase)
@@ -211,24 +233,51 @@ def encrypt_packages(zip_paths, passphrase):
             finally:
                 if cipher_temp.exists():
                     cipher_temp.unlink(missing_ok=True)
-            temp_records.append((zp, enc_temp, enc_final))
-
-        # All parts succeeded and verified! Now commit atomically
-        final_paths = []
-        for zp, enc_temp, enc_final in temp_records:
-            os.replace(enc_temp, enc_final)
-            try:
-                os.chmod(enc_final, 0o600)
-            except OSError:
-                pass
-            zp.unlink(missing_ok=True)
-            final_paths.append(enc_final)
-        return final_paths
+            staged.append((zp, enc_temp, enc_final))
     except Exception as e:
-        for _, enc_temp, _ in temp_records:
+        for _, enc_temp, _ in staged:
             if enc_temp.exists():
                 enc_temp.unlink(missing_ok=True)
-        raise EncryptionError(f"Transactional encryption failed: {e}") from e
+        raise EncryptionError(f"Staging/verification failed: {e}") from e
+
+    # Phase 3: Transactional Multi-File Commit
+    committed_finals = []
+    try:
+        for zp, enc_temp, enc_final in staged:
+            _commit_file(enc_temp, enc_final)
+            committed_finals.append(enc_final)
+    except Exception as commit_exc:
+        # Phase 3 failure: Rollback all committed parts in this batch!
+        rollback_errors = []
+        for cf in committed_finals:
+            try:
+                if cf.exists():
+                    cf.unlink(missing_ok=True)
+            except Exception as unl_err:
+                rollback_errors.append(f"Failed to unlink committed {cf}: {unl_err}")
+
+        # Clean up any remaining staged temp files
+        for _, enc_temp, _ in staged:
+            try:
+                if enc_temp.exists():
+                    enc_temp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        msg = f"Multi-part encryption commit failed: {commit_exc}. All committed files rolled back; all original plaintext ZIPs preserved intact."
+        if rollback_errors:
+            msg += f" (Rollback errors: {'; '.join(rollback_errors)})"
+        raise EncryptionError(msg) from commit_exc
+
+    # Phase 4: Cleanup Plaintext ZIPs (ONLY after ALL parts committed successfully!)
+    cleanup_errors = []
+    for zp, _, _ in staged:
+        try:
+            zp.unlink(missing_ok=True)
+        except Exception as unl_err:
+            cleanup_errors.append(f"Failed to remove plaintext {zp}: {unl_err}")
+
+    return committed_finals
 
 
 def decrypt_package(enc_path, passphrase, dest=None):

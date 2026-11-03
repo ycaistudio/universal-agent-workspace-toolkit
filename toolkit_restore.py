@@ -14,7 +14,7 @@ import json
 import shutil
 import zipfile
 import tempfile
-import re
+import uuid
 from datetime import datetime
 from pathlib import Path
 from toolkit_scanner import win_p, calculate_sha256
@@ -116,51 +116,127 @@ def validate_manifest_schema(manifest):
 
 
 class RestoreTransaction:
-    """Manages transactional restore and rollback (REL-03)."""
-    def __init__(self, rollback_snapshot_dir=None):
+    """Manages transactional restore and rollback (REL-03 / v2.3.1 Reliability)."""
+    def __init__(self, rollback_snapshot_dir=None, backup_dir=None):
         self.snapshot_dir = Path(rollback_snapshot_dir) if rollback_snapshot_dir else None
+        self._custom_backup = backup_dir is not None
+        if backup_dir:
+            self.tx_backup_dir = Path(backup_dir)
+            self.tx_backup_dir.mkdir(parents=True, exist_ok=True)
+        elif self.snapshot_dir:
+            self.tx_backup_dir = self.snapshot_dir / "_tx_backups"
+            self.tx_backup_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.tx_backup_dir = Path(tempfile.mkdtemp(prefix="uawt_restore_tx_backup_"))
+
         self.created_files = []
-        self.modified_files = []
+        self.modified_files = []  # list of (Path(orig_path), Path(backup_path))
         self.created_dirs = []
         self.committed = False
         self.log = []
+        self.rollback_errors = []
 
     def record_create(self, path):
         self.created_files.append(Path(path))
         self.log.append(f"CREATE: {path}")
 
-    def record_modify(self, path, backup_path):
-        self.modified_files.append((Path(path), Path(backup_path)))
-        self.log.append(f"MODIFY: {path}")
+    def backup_and_record_modify(self, path):
+        """Safely backup the original file before modifying it, then record the transaction."""
+        p = Path(path)
+        if not p.is_file():
+            return None
+        token = uuid.uuid4().hex[:8]
+        backup_name = f"mod_{len(self.modified_files)}_{token}_{p.name}"
+        backup_path = self.tx_backup_dir / backup_name
+        try:
+            shutil.copy2(win_p(p), win_p(backup_path))
+        except Exception as e:
+            raise OSError(f"Failed to create transaction backup of {p}: {e}") from e
+
+        self.modified_files.append((p, backup_path))
+        self.log.append(f"MODIFY: {p} (backed up to {backup_path})")
+        return backup_path
+
+    def record_modify(self, path, backup_path=None):
+        """Record modify. If backup_path == path or None, automatically create an independent backup."""
+        p = Path(path)
+        bp = Path(backup_path) if backup_path else None
+        if bp is None or bp == p:
+            return self.backup_and_record_modify(p)
+        self.modified_files.append((p, bp))
+        self.log.append(f"MODIFY: {p} (backup: {bp})")
+        return bp
 
     def record_dir(self, path):
-        self.created_dirs.append(Path(path))
+        d = Path(path)
+        if d not in self.created_dirs:
+            self.created_dirs.append(d)
 
     def rollback(self):
-        """Rollback all changes made during the restore transaction."""
+        """Rollback all changes made during the restore transaction in reverse order."""
+        if self.committed:
+            raise RuntimeError("Cannot rollback a committed transaction")
+
+        self.rollback_errors = []
+
+        # 1. Remove newly created files in reverse order
         for p in reversed(self.created_files):
             try:
                 if p.is_file() or p.is_symlink():
                     p.unlink(missing_ok=True)
-            except OSError:
-                pass
-        for orig, backup in self.modified_files:
+            except Exception as e:
+                self.rollback_errors.append(f"Failed to delete created file {p}: {e}")
+
+        # 2. Restore modified files in reverse order from independent backups
+        for orig, backup in reversed(self.modified_files):
             try:
                 if backup.is_file():
+                    orig.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(win_p(backup), win_p(orig))
-            except OSError:
-                pass
+                else:
+                    self.rollback_errors.append(f"Backup file {backup} missing for {orig}")
+            except Exception as e:
+                self.rollback_errors.append(f"Failed to restore {orig} from backup {backup}: {e}")
+
+        # 3. Remove newly created directories in reverse order (if empty)
         for d in reversed(self.created_dirs):
             try:
                 if d.is_dir() and not any(d.iterdir()):
                     d.rmdir()
-            except OSError:
+            except Exception as e:
+                self.rollback_errors.append(f"Failed to remove created directory {d}: {e}")
+
+        if self.rollback_errors:
+            report_lines = [
+                "=== UAWT RESTORE ROLLBACK FAILURE REPORT ===",
+                f"Timestamp: {datetime.now().isoformat()}",
+                "Rollback errors:",
+                *self.rollback_errors,
+                "",
+                "Manual Recovery Mapping (Backup -> Original):",
+            ]
+            for orig, backup in self.modified_files:
+                report_lines.append(f"  {backup} -> {orig}")
+            report_file = self.tx_backup_dir / "ROLLBACK_ERRORS.txt"
+            try:
+                report_file.write_text("\n".join(report_lines), encoding="utf-8")
+            except Exception:
                 pass
+            self.log.append("TRANSACTION_ROLLBACK_FAILED")
+            raise RuntimeError(
+                f"Rollback encountered errors: {'; '.join(self.rollback_errors)}. "
+                f"Backups preserved at: {self.tx_backup_dir}"
+            )
+
         self.log.append("TRANSACTION_ROLLED_BACK")
+        if not self._custom_backup and not self.snapshot_dir and self.tx_backup_dir.exists():
+            shutil.rmtree(win_p(self.tx_backup_dir), ignore_errors=True)
 
     def commit(self):
         self.committed = True
         self.log.append("TRANSACTION_COMMITTED")
+        if not self._custom_backup and not self.snapshot_dir and self.tx_backup_dir.exists():
+            shutil.rmtree(win_p(self.tx_backup_dir), ignore_errors=True)
 
 
 def _read_manifest(zip_path):
@@ -446,6 +522,15 @@ def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user="", app
 
     def deploy(src, target):
         dest = Path(target)
+        cur = dest.parent
+        uncreated_dirs = []
+        while cur and not cur.exists() and cur != cur.parent:
+            uncreated_dirs.append(cur)
+            cur = cur.parent
+        for d in reversed(uncreated_dirs):
+            d.mkdir(parents=True, exist_ok=True)
+            tx.record_dir(d)
+
         dest.parent.mkdir(parents=True, exist_ok=True)
         if not dest.exists():
             tx.record_create(dest)
@@ -456,8 +541,8 @@ def execute_restore(staging_dir, target_env, user_home, ws_dst, src_user="", app
             shutil.copy2(win_p(src), win_p(alt))
             incoming.append(alt)
         else:
-            # fresh: overwriting existing file
-            tx.record_modify(dest, dest)
+            # fresh: overwriting existing file with independent backup before write
+            tx.backup_and_record_modify(dest)
             shutil.copy2(win_p(src), win_p(dest))
 
     try:
