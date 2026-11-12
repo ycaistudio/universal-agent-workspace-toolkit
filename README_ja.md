@@ -1,4 +1,5 @@
 # Universal AI Agent Workspace Toolkit (日本語完全マニュアル)
+![Universal Agent Workspace Toolkit](docs/yc-ai-studio-poster.jpg)
 **汎用 AI エージェント ワークスペース全域管理・移行・スナップショット復元ツール**  
 Google Antigravity、Claude Code、Cursor、VS Code（Cline / Roo）、**Grok Bot** に対応します。
 

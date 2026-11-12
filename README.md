@@ -1,4 +1,5 @@
 # Universal AI Agent Workspace Toolkit
+![Universal Agent Workspace Toolkit](docs/yc-ai-studio-poster.jpg)
 **Universal Agent-Native Workspace Management, Migration & Disaster Recovery Hub**  
 *通用 AI 智能體工作區全域管理、遷移與快照還原工具 (開源標準版)*  
 *汎用 AI エージェント ワークスペース全域管理・移行・スナップショット復元ツール (オープンソース標準版)*  
