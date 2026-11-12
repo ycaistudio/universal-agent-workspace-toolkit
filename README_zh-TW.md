@@ -1,4 +1,5 @@
 # Universal AI Agent Workspace Toolkit (繁體中文完整手冊)
+![Universal Agent Workspace Toolkit](docs/yc-ai-studio-poster.jpg)
 **通用 AI 智能體工作區全域管理、遷移與快照還原工具**  
 支援 Google Antigravity、Claude Code、Cursor、VS Code（Cline / Roo）與 **Grok Bot**。
 
